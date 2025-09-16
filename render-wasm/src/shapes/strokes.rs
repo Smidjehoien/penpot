@@ -1,6 +1,6 @@
-use crate::math;
 use crate::shapes::fills::Fill;
-use skia_safe as skia;
+use skia_safe::{self as skia, Rect};
+use std::collections::HashMap;
 
 use super::Corners;
 
@@ -64,7 +64,7 @@ pub struct Stroke {
     pub style: StrokeStyle,
     pub cap_end: StrokeCap,
     pub cap_start: StrokeCap,
-    kind: StrokeKind,
+    pub kind: StrokeKind,
 }
 
 impl Stroke {
@@ -116,23 +116,23 @@ impl Stroke {
     pub fn delta(&self) -> f32 {
         match self.kind {
             StrokeKind::InnerStroke => 0.,
-            StrokeKind::CenterStroke => self.width / 2.,
-            StrokeKind::OuterStroke => self.width,
+            StrokeKind::CenterStroke => self.width,
+            StrokeKind::OuterStroke => self.width * 2.,
         }
     }
 
-    pub fn outer_rect(&self, rect: &math::Rect) -> math::Rect {
+    pub fn outer_rect(&self, rect: &Rect) -> Rect {
         match self.kind {
-            StrokeKind::InnerStroke => math::Rect::from_xywh(
+            StrokeKind::InnerStroke => Rect::from_xywh(
                 rect.left + (self.width / 2.),
                 rect.top + (self.width / 2.),
                 rect.width() - self.width,
                 rect.height() - self.width,
             ),
             StrokeKind::CenterStroke => {
-                math::Rect::from_xywh(rect.left, rect.top, rect.width(), rect.height())
+                Rect::from_xywh(rect.left, rect.top, rect.width(), rect.height())
             }
-            StrokeKind::OuterStroke => math::Rect::from_xywh(
+            StrokeKind::OuterStroke => Rect::from_xywh(
                 rect.left - (self.width / 2.),
                 rect.top - (self.width / 2.),
                 rect.width() + self.width,
@@ -155,11 +155,32 @@ impl Stroke {
         outer
     }
 
-    pub fn to_paint(&self, rect: &math::Rect) -> skia::Paint {
-        let mut paint = self.fill.to_paint(rect);
+    pub fn to_paint(
+        &self,
+        rect: &Rect,
+        svg_attrs: &HashMap<String, String>,
+        scale: f32,
+        antialias: bool,
+    ) -> skia::Paint {
+        let mut paint = self.fill.to_paint(rect, antialias);
         paint.set_style(skia::PaintStyle::Stroke);
-        paint.set_stroke_width(self.width);
-        paint.set_anti_alias(true);
+
+        let width = match self.kind {
+            StrokeKind::InnerStroke => self.width,
+            StrokeKind::CenterStroke => self.width,
+            StrokeKind::OuterStroke => self.width + (1. / scale),
+        };
+
+        paint.set_stroke_width(width);
+        paint.set_anti_alias(antialias);
+
+        if let Some("round") = svg_attrs.get("stroke-linecap").map(String::as_str) {
+            paint.set_stroke_cap(skia::paint::Cap::Round);
+        }
+
+        if let Some("round") = svg_attrs.get("stroke-linejoin").map(String::as_str) {
+            paint.set_stroke_join(skia::paint::Join::Round);
+        }
 
         if self.style != StrokeStyle::Solid {
             let path_effect = match self.style {
@@ -199,19 +220,25 @@ impl Stroke {
         paint
     }
 
-    pub fn to_stroked_paint(&self, kind: StrokeKind, rect: &math::Rect) -> skia::Paint {
-        let mut paint = self.to_paint(rect);
-        match kind {
+    pub fn to_stroked_paint(
+        &self,
+        is_open: bool,
+        rect: &Rect,
+        svg_attrs: &HashMap<String, String>,
+        scale: f32,
+        antialias: bool,
+    ) -> skia::Paint {
+        let mut paint = self.to_paint(rect, svg_attrs, scale, antialias);
+        match self.render_kind(is_open) {
             StrokeKind::InnerStroke => {
-                paint.set_stroke_width(2. * self.width);
-                paint
+                paint.set_stroke_width(2. * paint.stroke_width());
             }
-
-            StrokeKind::CenterStroke => paint,
+            StrokeKind::CenterStroke => {}
             StrokeKind::OuterStroke => {
-                paint.set_stroke_width(2. * self.width);
-                paint
+                paint.set_stroke_width(2. * paint.stroke_width());
             }
         }
+
+        paint
     }
 }

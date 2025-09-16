@@ -18,6 +18,7 @@
    [app.main.data.common :as dcm]
    [app.main.data.workspace :as dw]
    [app.main.data.workspace.interactions :as dwi]
+   [app.main.features :as features]
    [app.main.refs :as refs]
    [app.main.store :as st]
    [app.main.streams :as ms]
@@ -91,10 +92,12 @@
         objects (deref refs/workspace-page-objects)
 
         color (if selected?
-                (if (ctn/in-any-component? objects frame)
+                (if (or (ctn/in-any-component? objects frame) (ctk/is-variant-container? frame))
                   "var(--assets-component-hightlight)"
                   "var(--color-accent-tertiary)")
                 "#8f9da3") ;; TODO: Set this color on the DS
+
+        blocked? (:blocked frame)
 
         on-pointer-down
         (mf/use-fn
@@ -129,9 +132,11 @@
            (on-frame-leave (:id frame))))
 
         main-instance? (ctk/main-instance? frame)
+        variants?      (features/use-feature "variants/v1")
+        is-variant?    (when variants? (:is-variant-container frame))
 
         text-width (* (:width frame) zoom)
-        show-icon? (and (or (:use-for-thumbnail frame) grid-edition? main-instance?)
+        show-icon? (and (or (:use-for-thumbnail frame) grid-edition? main-instance? is-variant?)
                         (not (<= text-width 15)))
         text-pos-x (if show-icon? 15 0)
 
@@ -145,11 +150,13 @@
 
         start-edit
         (mf/use-fn
-         (mf/deps frame-id edition?)
+         (mf/deps frame-id edition? blocked? workspace-read-only?)
          (fn []
-           (if (not edition?)
-             (reset! edition* true)
-             (st/emit! (dw/start-rename-shape frame-id)))))
+           (when (and (not blocked?)
+                      (not workspace-read-only?))
+             (if (not edition?)
+               (reset! edition* true)
+               (st/emit! (dw/start-rename-shape frame-id))))))
 
         accept-edit
         (mf/use-fn
@@ -192,7 +199,8 @@
           (cond
             (:use-for-thumbnail frame) [:use {:href "#icon-boards-thumbnail"}]
             grid-edition? [:use {:href "#icon-grid"}]
-            main-instance? [:use {:href "#icon-component"}])])
+            main-instance? [:use {:href "#icon-component"}]
+            is-variant?  [:use {:href "#icon-component"}])])
 
        (if ^boolean edition?
            ;; Case when edition? is true
@@ -243,8 +251,7 @@
         on-frame-enter       (unchecked-get props "on-frame-enter")
         on-frame-leave       (unchecked-get props "on-frame-leave")
         on-frame-select      (unchecked-get props "on-frame-select")
-        components-v2        (mf/use-ctx ctx/components-v2)
-        shapes               (ctt/get-frames objects {:skip-copies? components-v2})
+        shapes               (ctt/get-frames objects {:skip-copies? true})
         shapes               (if (dbg/enabled? :shape-titles)
                                (into (set shapes)
                                      (map (d/getf objects))

@@ -6,13 +6,13 @@
 
 (ns app.rpc.commands.files-create
   (:require
+   [app.binfile.common :as bfc]
    [app.common.data.macros :as dm]
    [app.common.features :as cfeat]
    [app.common.schema :as sm]
    [app.common.types.file :as ctf]
    [app.config :as cf]
    [app.db :as db]
-   [app.features.fdata :as feat.fdata]
    [app.loggers.audit :as-alias audit]
    [app.loggers.webhooks :as-alias webhooks]
    [app.rpc :as-alias rpc]
@@ -21,7 +21,6 @@
    [app.rpc.doc :as-alias doc]
    [app.rpc.permissions :as perms]
    [app.rpc.quotes :as quotes]
-   [app.util.blob :as blob]
    [app.util.pointer-map :as pmap]
    [app.util.services :as sv]
    [app.util.time :as dt]
@@ -48,34 +47,19 @@
 
   (binding [pmap/*tracked* (pmap/create-tracked)
             cfeat/*current* features]
-    (let [file     (ctf/make-file {:id id
-                                   :project-id project-id
-                                   :name name
-                                   :revn revn
-                                   :is-shared is-shared
-                                   :features features
-                                   :ignore-sync-until ignore-sync-until
-                                   :modified-at modified-at
-                                   :deleted-at deleted-at
-                                   :create-page create-page
-                                   :page-id page-id})
-
-          file     (if (contains? features "fdata/objects-map")
-                     (feat.fdata/enable-objects-map file)
-                     file)
-
-          file     (if (contains? features "fdata/pointer-map")
-                     (feat.fdata/enable-pointer-map file)
-                     file)]
-
-      (db/insert! conn :file
-                  (-> file
-                      (update :data blob/encode)
-                      (update :features db/encode-pgarray conn "text"))
-                  {::db/return-keys false})
-
-      (when (contains? features "fdata/pointer-map")
-        (feat.fdata/persist-pointers! cfg (:id file)))
+    (let [file (ctf/make-file {:id id
+                               :project-id project-id
+                               :name name
+                               :revn revn
+                               :is-shared is-shared
+                               :features features
+                               :ignore-sync-until ignore-sync-until
+                               :modified-at modified-at
+                               :deleted-at deleted-at
+                               :create-page create-page
+                               :page-id page-id})
+          file (-> (bfc/insert-file! cfg file)
+                   (bfc/decode-row))]
 
       (->> (assoc params :file-id (:id file) :role :owner)
            (create-file-role! conn))
@@ -107,9 +91,6 @@
                                  :project-id project-id)
         team-id  (:id team)
 
-        ;; When we create files, we only need to respect the team
-        ;; features, because some features can be enabled
-        ;; globally, but the team is still not migrated properly.
         features (-> (cfeat/get-team-enabled-features cf/flags team)
                      (cfeat/check-client-features! (:features params)))
 
@@ -123,7 +104,7 @@
 
         params   (-> params
                      (assoc :profile-id profile-id)
-                     (assoc :features (set/difference features cfeat/frontend-only-features)))]
+                     (assoc :features features))]
 
     (quotes/check! cfg {::quotes/id ::quotes/files-per-project
                         ::quotes/team-id team-id
@@ -136,7 +117,7 @@
     ;; to lost team features updating
 
     ;; When newly computed features does not match exactly with
-    ;; the features defined on team row, we update it.
+    ;; the features defined on team row, we update it
     (when (not= features (:features team))
       (let [features (db/create-array conn "text" features)]
         (db/update! conn :team

@@ -19,6 +19,15 @@
                        (ctob/add-token-in-set "core" (ctob/make-token {:value "{borderRadius.sm} * 2"
                                                                        :name "borderRadius.md-with-dashes"
                                                                        :type :border-radius}))
+                       (ctob/add-token-in-set "core" (ctob/make-token {:name "borderRadius.large"
+                                                                       :value "123456789012345"
+                                                                       :type :border-radius}))
+                       (ctob/add-token-in-set "core" (ctob/make-token {:name "borderRadius.largePx"
+                                                                       :value "123456789012345px"
+                                                                       :type :border-radius}))
+                       (ctob/add-token-in-set "core" (ctob/make-token {:name "borderRadius.largeFn"
+                                                                       :value "{borderRadius.sm} * 200000000"
+                                                                       :type :border-radius}))
                        (ctob/get-all-tokens))]
         (-> (sd/resolve-tokens+ tokens)
             (p/finally
@@ -27,6 +36,15 @@
                 (t/is (= "px" (get-in resolved-tokens ["borderRadius.sm" :unit])))
                 (t/is (= 24 (get-in resolved-tokens ["borderRadius.md-with-dashes" :resolved-value])))
                 (t/is (= "px" (get-in resolved-tokens ["borderRadius.md-with-dashes" :unit])))
+                (t/is (nil? (get-in resolved-tokens ["borderRadius.large" :resolved-value])))
+                (t/is (= :error.token/number-too-large
+                         (get-in resolved-tokens ["borderRadius.large" :errors 0 :error/code])))
+                (t/is (nil? (get-in resolved-tokens ["borderRadius.largePx" :resolved-value])))
+                (t/is (= :error.token/number-too-large
+                         (get-in resolved-tokens ["borderRadius.largePx" :errors 0 :error/code])))
+                (t/is (nil? (get-in resolved-tokens ["borderRadius.largeFn" :resolved-value])))
+                (t/is (= :error.token/number-too-large
+                         (get-in resolved-tokens ["borderRadius.largeFn" :errors 0 :error/code])))
                 (done))))))))
 
 (t/deftest process-json-stream-test
@@ -115,3 +133,29 @@ color.value tries to reference missing, which is not defined.")))
               (fn [err]
                 (t/is (= :error.import/style-dictionary-reference-errors (:error/code (ex-data err))))
                 (done))))))))
+
+(t/deftest single-set-legacy-json-decoding
+  (let [decode-single-set-legacy-json #'sd/decode-single-set-legacy-json
+        json {"color" {"red" {"100" {"value" "red"
+                                     "type" "color"
+                                     "description" ""}}}}
+        lib (decode-single-set-legacy-json (ctob/ensure-tokens-lib nil) "single_set" json)
+        get-set-token (fn [set-name token-name]
+                        (some-> (ctob/get-set lib set-name)
+                                (ctob/get-token token-name)))]
+    (t/is (= '("single_set") (ctob/get-ordered-set-names lib)))
+    (t/testing "token added"
+      (t/is (some? (get-set-token "single_set" "color.red.100"))))))
+
+(t/deftest single-set-dtcg-json-decoding
+  (let [decode-single-set-json #'sd/decode-single-set-json
+        json (-> {"color" {"red" {"100" {"$value" "red"
+                                         "$type" "color"
+                                         "$description" ""}}}})
+        lib (decode-single-set-json (ctob/ensure-tokens-lib nil) "single_set" json)
+        get-set-token (fn [set-name token-name]
+                        (some-> (ctob/get-set lib set-name)
+                                (ctob/get-token token-name)))]
+    (t/is (= '("single_set") (ctob/get-ordered-set-names lib)))
+    (t/testing "token added"
+      (t/is (some? (get-set-token "single_set" "color.red.100"))))))

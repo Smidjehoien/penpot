@@ -20,6 +20,8 @@
    [app.main.data.workspace :as dw]
    [app.main.data.workspace.libraries :as dwl]
    [app.main.data.workspace.undo :as dwu]
+   [app.main.data.workspace.variants :as dwv]
+   [app.main.features :as features]
    [app.main.refs :as refs]
    [app.main.render :refer [component-svg component-svg-thumbnail]]
    [app.main.store :as st]
@@ -131,6 +133,10 @@
     :typographies "text-palette"
     "add"))
 
+(defn should-display-asset-count?
+  [section assets-count]
+  (or (not (= section :tokens)) (and (< 0 assets-count) (= section :tokens))))
+
 (mf/defc asset-section
   {::mf/wrap-props false}
   [{:keys [children file-id title section assets-count icon open? on-click]}]
@@ -152,14 +158,17 @@
 
         title
         (mf/html
-         [:span {:class (stl/css :title-name)}
+         [:span {:class (stl/css-case :title-name true
+                                      :title-tokens (= section :tokens)
+                                      :title-tokens-active (and (= section :tokens) (< 0 assets-count)))}
           [:span {:class (stl/css :section-icon)}
            [:> icon* {:icon-id (or icon (section-icon section)) :size "s"}]]
           [:span {:class (stl/css :section-name)}
            title]
 
-          [:span {:class (stl/css :num-assets)}
-           assets-count]])]
+          (when (should-display-asset-count? section assets-count)
+            [:span {:class (stl/css :num-assets)}
+             assets-count])])]
 
     [:div {:class (stl/css-case :asset-section true
                                 :opened (and (< 0 assets-count)
@@ -273,9 +282,8 @@
           (:id target-asset)
           (cfh/merge-path-item prefix (:name target-asset))))))))
 
-(mf/defc component-item-thumbnail
+(mf/defc component-item-thumbnail*
   "Component that renders the thumbnail image or the original SVG."
-  {::mf/props :obj}
   [{:keys [file-id root-shape component container class is-hidden]}]
   (let [page-id (:main-instance-page component)
         root-id (:main-instance-id component)
@@ -314,14 +322,14 @@
         :is-hidden is-hidden}])))
 
 (defn generate-components-menu-entries
-  [shapes components-v2]
+  [shapes]
   (let [multi               (> (count shapes) 1)
         copies              (filter ctk/in-component-copy? shapes)
 
         current-file-id     (mf/use-ctx ctx/current-file-id)
         current-page-id     (mf/use-ctx ctx/current-page-id)
 
-        libraries           (deref refs/libraries)
+        libraries           (deref refs/files)
         current-file        (get libraries current-file-id)
 
         objects             (-> (dsh/get-page (:data current-file) current-page-id)
@@ -342,13 +350,13 @@
 
         touched-not-dangling (filter #(and (cfh/component-touched? objects (:id %))
                                            (find-component % false)) copies)
-        can-reset-overrides? (or (not components-v2) (seq touched-not-dangling))
+        can-reset-overrides? (seq touched-not-dangling)
 
 
         ;; For when it's only one shape
         shape               (first shapes)
         id                  (:id shape)
-        main-instance?      (if components-v2 (ctk/main-instance? shape) true)
+        main-instance?      (ctk/main-instance? shape)
 
         component-id        (:component-id shape)
         library-id          (:component-file shape)
@@ -364,13 +372,14 @@
 
         can-update-main?    (and (not multi)
                                  (not is-dangling?)
-                                 (or (not components-v2)
-                                     (and (not main-instance?)
-                                          (not (ctn/has-any-copy-parent? objects shape))
-                                          (cfh/component-touched? objects (:id shape)))))
+                                 (and (not main-instance?)
+                                      (not (ctn/has-any-copy-parent? objects shape))
+                                      (cfh/component-touched? objects (:id shape))))
 
         can-detach? (and (seq copies)
                          (every? #(not (ctn/has-any-copy-parent? objects %)) copies))
+
+        variants? (features/use-feature "variants/v1")
 
 
         do-detach-component
@@ -405,6 +414,12 @@
         do-create-annotation
         #(st/emit! (dw/set-annotations-id-for-create id))
 
+        do-add-variant
+        #(when variants?
+           (if (ctk/is-variant? shape)
+             (st/emit! (dwv/add-new-variant id))
+             (st/emit! (dwv/transform-in-variant id))))
+
         do-show-local-component
         #(st/emit! (dwl/go-to-local-component :id component-id))
 
@@ -434,7 +449,7 @@
         menu-entries [(when (and (not multi) main-instance?)
                         {:title (tr "workspace.shape.menu.show-in-assets")
                          :action do-show-in-assets})
-                      (when (and (not multi) main-instance? local-component? lacks-annotation? components-v2)
+                      (when (and (not multi) main-instance? local-component? lacks-annotation?)
                         {:title (tr "workspace.shape.menu.create-annotation")
                          :action do-create-annotation})
                       (when can-detach?
@@ -446,7 +461,7 @@
                       (when can-reset-overrides?
                         {:title (tr "workspace.shape.menu.reset-overrides")
                          :action do-reset-component})
-                      (when (and (seq restorable-copies) components-v2)
+                      (when (seq restorable-copies)
                         {:title (tr "workspace.shape.menu.restore-main")
                          :action do-restore-component})
                       (when can-show-component?
@@ -454,5 +469,9 @@
                          :action do-show-component})
                       (when can-update-main?
                         {:title (tr "workspace.shape.menu.update-main")
-                         :action do-update-component})]]
+                         :action do-update-component})
+                      (when (and variants? (not multi) main-instance?)
+                        {:title (tr "workspace.shape.menu.add-variant")
+                         :shortcut :create-component
+                         :action do-add-variant})]]
     (filter (complement nil?) menu-entries)))

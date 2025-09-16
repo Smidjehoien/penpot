@@ -12,6 +12,7 @@
    [app.common.geom.matrix :as gmt]
    [app.common.geom.point :as gpt]
    [app.common.geom.shapes :as gsh]
+   [app.common.types.component :as ctk]
    [app.common.types.container :as ctn]
    [app.common.types.shape :as cts]
    [app.main.data.workspace :as dw]
@@ -318,7 +319,13 @@
   [{:keys [shape zoom color on-move-selected on-context-menu disable-handlers]}]
   (let [selrect        (dm/get-prop shape :selrect)
         transform-type (mf/deref refs/current-transform)
-        transform      (gsh/transform-str shape)]
+        sr-transform   (mf/deref refs/workspace-selrect-transform)
+
+        transform
+        (dm/str
+         (cond->> (gsh/transform-matrix shape)
+           (some? sr-transform)
+           (gmt/multiply sr-transform)))]
 
     (when (and (some? selrect)
                (not (or (= transform-type :move)
@@ -336,13 +343,18 @@
   {::mf/wrap-props false}
   [{:keys [shape zoom color on-resize on-rotate disable-handlers]}]
   (let [transform-type (mf/deref refs/current-transform)
+        sr-transform  (mf/deref refs/workspace-selrect-transform)
+
         read-only?     (mf/use-ctx ctx/workspace-read-only?)
 
         layout         (mf/deref refs/workspace-layout)
         scale-text?    (contains? layout :scale-text)
 
         selrect        (dm/get-prop shape :selrect)
-        transform      (gsh/transform-matrix shape)
+
+        transform      (cond->> (gsh/transform-matrix shape)
+                         (some? sr-transform)
+                         (gmt/multiply sr-transform))
 
         rotation       (-> (gpt/point 1 0)
                            (gpt/transform (:transform shape))
@@ -519,7 +531,9 @@
         ;; Note that we don't use mf/deref to avoid a repaint dependency here
         objects (deref refs/workspace-page-objects)
 
-        color   (if (and (= total 1) ^boolean (ctn/in-any-component? objects shape))
+        color   (if (and (= total 1) ^boolean
+                         (or (ctn/in-any-component? objects shape)
+                             (ctk/is-variant-container? shape)))
                   selection-rect-color-component
                   selection-rect-color-normal)]
 
@@ -566,7 +580,9 @@
         ;; Note that we don't use mf/deref to avoid a repaint dependency here
         objects (deref refs/workspace-page-objects)
 
-        color   (if (and (= total 1) ^boolean (ctn/in-any-component? objects shape))
+        color   (if (and (= total 1) ^boolean
+                         (or (ctn/in-any-component? objects shape)
+                             (ctk/is-variant-container? shape)))
                   selection-rect-color-component
                   selection-rect-color-normal)]
 

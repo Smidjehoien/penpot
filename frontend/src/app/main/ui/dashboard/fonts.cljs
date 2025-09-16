@@ -9,6 +9,8 @@
   (:require
    [app.common.data.macros :as dm]
    [app.common.media :as cm]
+   [app.common.uuid :as uuid]
+   [app.config :as cf]
    [app.main.data.fonts :as df]
    [app.main.data.modal :as modal]
    [app.main.data.notifications :as ntf]
@@ -120,7 +122,7 @@
          (fn [event]
            (let [id   (-> (dom/get-current-target event)
                           (dom/get-data "id")
-                          (parse-uuid))
+                          (uuid/parse))
                  item (get fonts id)]
              (on-upload* item))))
 
@@ -131,7 +133,7 @@
            (let [target (dom/get-current-target event)
                  id     (-> target
                             (dom/get-data "id")
-                            (parse-uuid))
+                            (uuid/parse))
                  name   (dom/get-value target)]
              (when-not (str/blank? name)
                (swap! fonts* df/rename-and-regroup id name installed-fonts)))))
@@ -142,7 +144,7 @@
            (let [target (dom/get-current-target event)
                  id     (-> target
                             (dom/get-data "id")
-                            (parse-uuid))
+                            (uuid/parse))
                  name   (dom/get-value target)]
              (swap! fonts* update id assoc :font-family-tmp name))))
 
@@ -152,7 +154,7 @@
          (fn [event]
            (let [id (-> (dom/get-current-target event)
                         (dom/get-data "id")
-                        (parse-uuid))]
+                        (uuid/parse))]
              (swap! fonts* dissoc id))))
 
         on-upload-all
@@ -183,9 +185,10 @@
                            :ref input-ref
                            :on-selected on-selected}]]
 
-       [:& context-notification {:content (tr "dashboard.fonts.hero-text2")
-                                 :level :default
-                                 :is-html true}]
+       (when-let [url cf/terms-of-service-uri]
+         [:& context-notification {:content (tr "dashboard.fonts.hero-text2" url)
+                                   :level :default
+                                   :is-html true}])
 
        (when problematic-fonts?
          [:& context-notification {:content (tr "dashboard.fonts.warning-text")
@@ -342,7 +345,7 @@
          (fn [event]
            (let [id      (-> (dom/get-current-target event)
                              (dom/get-data "id")
-                             (parse-uuid))
+                             (uuid/parse))
                  options {:type :confirm
                           :title (tr "modals.delete-font-variant.title")
                           :message (tr "modals.delete-font-variant.message")

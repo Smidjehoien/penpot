@@ -31,7 +31,7 @@
      "Need that root is already a frame"
      (cfh/frame-shape? root))
 
-    (let [[_new-root _new-shapes updated-shapes]
+    (let [[_new-root updated-shapes]
           (ctn/convert-shape-in-component root (:objects page) (:id file))
 
           updated-root (first updated-shapes) ; Can't use new-root because it has a new id
@@ -54,8 +54,15 @@
                                         :name name
                                         :path path
                                         :main-instance-id (:id updated-root)
-                                        :main-instance-page (:id page)
-                                        :shapes updated-shapes))))))))
+                                        :main-instance-page (:id page)))))))))
+
+(defn update-component
+  [file component-label & {:keys [] :as params}]
+  (let [component-id  (thi/id component-label)]
+    (ctf/update-file-data
+     file
+     (fn [file-data]
+       (ctkl/update-component file-data component-id #(merge % params))))))
 
 (defn get-component
   [file label & {:keys [include-deleted?] :or {include-deleted? false}}]
@@ -90,7 +97,6 @@
                                      component
                                      (:data library)
                                      (gpt/point 100 100)
-                                     true
                                      {:force-id (thi/new-id! copy-root-label)
                                       :force-frame-id frame-id})
 

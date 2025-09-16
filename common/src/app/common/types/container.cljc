@@ -267,66 +267,7 @@
         new-children       (->> (cfh/get-children objects (:id root))
                                 (map #(dissoc % :component-root)))]
     [(assoc new-root :id new-id)
-     nil
      (into [new-root] new-children)]))
-
-(defn make-component-shape ;; Only used for components v1
-  "Clone the shape and all children. Generate new ids and detach
-  from parent and frame. Update the original shapes to have links
-  to the new ones."
-  [shape objects file-id components-v2]
-  (assert (nil? (:component-id shape)))
-  (assert (nil? (:component-file shape)))
-  (assert (nil? (:shape-ref shape)))
-  (let [frame-ids-map (volatile! {})
-
-        ;; Ensure that the component root is not an instance
-        update-new-shape (fn [new-shape original-shape]
-                           (when (= (:type original-shape) :frame)
-                             (vswap! frame-ids-map assoc (:id original-shape) (:id new-shape)))
-
-                           (cond-> new-shape
-                             true
-                             (dissoc :component-root)
-
-                             (nil? (:parent-id new-shape))
-                             (dissoc :component-id
-                                     :component-file
-                                     :shape-ref)))
-
-        ;; Make the original shape an instance of the new component.
-        ;; If one of the original shape children already was a component
-        ;; instance, maintain this instanceness untouched.
-        update-original-shape (fn [original-shape new-shape]
-                                (cond-> original-shape
-                                  (nil? (:shape-ref original-shape))
-                                  (-> (assoc :shape-ref (:id new-shape))
-                                      (dissoc :touched))
-
-                                  (nil? (:parent-id new-shape))
-                                  (assoc :component-id (:id new-shape)
-                                         :component-file file-id
-                                         :component-root true)
-
-                                  (and (nil? (:parent-id new-shape)) components-v2)
-                                  (assoc :main-instance true)
-
-                                  (some? (:parent-id new-shape))
-                                  (dissoc :component-root)))
-
-        [new-root-shape new-shapes updated-shapes]
-        (ctst/clone-shape shape
-                          nil
-                          objects
-                          :update-new-shape update-new-shape
-                          :update-original-shape update-original-shape)
-
-        ;; If frame-id points to a shape inside the component, remap it to the
-        ;; corresponding new frame shape. If not, set it to nil.
-        remap-frame-id (fn [shape]
-                         (update shape :frame-id #(get @frame-ids-map % nil)))]
-
-    [new-root-shape (map remap-frame-id new-shapes) updated-shapes]))
 
 (defn remove-swap-keep-attrs
   "Remove flex children properties except the fit-content for flex layouts. These are properties
@@ -347,27 +288,28 @@
   Clone the shapes of the component, generating new names and ids, and
   linking each new shape to the corresponding one of the
   component. Place the new instance coordinates in the given
-  position."
-  ([container component library-data position components-v2]
-   (make-component-instance container component library-data position components-v2 {}))
+  position.
 
-  ([container component library-data position components-v2
+  WARNING: This process does not remap media references (on fills, strokes, ...); that is
+  delegated to an async process on the backend side that checks unreferenced shapes and
+  automatically creates correct references."
+  ([page component library-data position]
+   (make-component-instance page component library-data position {}))
+  ([page component library-data position
     {:keys [main-instance? force-id force-frame-id keep-ids?]
      :or {main-instance? false force-id nil force-frame-id nil keep-ids? false}}]
-   (let [component-page  (when components-v2
-                           (ctpl/get-page library-data (:main-instance-page component)))
+   (let [component-page  (ctpl/get-page library-data (:main-instance-page component))
 
-         component-shape (if components-v2
-                           (-> (get-shape component-page (:main-instance-id component))
-                               (assoc :parent-id nil) ;; On v2 we force parent-id to nil in order to behave like v1
-                               (assoc :frame-id uuid/zero)
-                               (remove-swap-keep-attrs))
-                           (get-shape component (:id component)))
+         component-shape (-> (get-shape component-page (:main-instance-id component))
+                             (assoc :parent-id nil) ;; On v2 we force parent-id to nil in order to behave like v1
+                             (assoc :frame-id uuid/zero)
+                             (remove-swap-keep-attrs))
+
 
          orig-pos        (gpt/point (:x component-shape) (:y component-shape))
          delta           (gpt/subtract position orig-pos)
 
-         objects         (:objects container)
+         objects         (:objects page)
          unames          (volatile! (cfh/get-used-names objects))
 
          component-children
@@ -384,7 +326,7 @@
                                                                           (nil? (get component-children (:id %)))
                                                                           ;; We must avoid that destiny frame is inside a copy
                                                                           (not (ctk/in-component-copy? %)))}))
-         frame           (get-shape container frame-id)
+         frame           (get-shape page frame-id)
          component-frame (get-component-shape objects frame {:allow-main? true})
 
          ids-map         (volatile! {})
@@ -392,8 +334,7 @@
          update-new-shape
          (fn [new-shape original-shape]
            (let [new-name (:name new-shape)
-                 root?    (or (ctk/instance-root? original-shape)   ; If shape is inside a component (not components-v2)
-                              (nil? (:parent-id original-shape)))]  ; we detect it by having no parent)
+                 root?    (ctk/instance-root? original-shape)]
 
              (when root?
                (vswap! unames conj new-name))
@@ -403,7 +344,7 @@
              (cond-> new-shape
                :always
                (-> (gsh/move delta)
-                   (dissoc :touched))
+                   (dissoc :touched :variant-id :variant-name))
 
                (and main-instance? root?)
                (assoc :main-instance true)
@@ -414,10 +355,8 @@
                main-instance?
                (dissoc :shape-ref)
 
-               (and (not main-instance?)
-                    (or components-v2                        ; In v1, shape-ref points to the remote instance
-                        (nil? (:shape-ref original-shape)))) ; in v2, shape-ref points to the near instance
-               (assoc :shape-ref (:id original-shape))
+               (not main-instance?)
+               (assoc :shape-ref (:id original-shape)) ; shape-ref points to the near instance
 
                (nil? (:parent-id original-shape))
                (assoc :component-id (:id component)
@@ -425,19 +364,19 @@
                       :component-root true
                       :name new-name)
 
-               (or (some? (:parent-id original-shape)) ; On v2 we have removed the parent-id for component roots (see above)
+               (or (some? (:parent-id original-shape)) ; On v2 we have removed the parent-id for component roots
                    (some? component-frame))
                (dissoc :component-root))))
 
          [new-shape new-shapes _]
          (ctst/clone-shape component-shape
                            frame-id
-                           (if components-v2 (:objects component-page) (:objects component))
+                           (:objects component-page)
                            :update-new-shape update-new-shape
                            :force-id force-id
                            :keep-ids? keep-ids?
                            :frame-id frame-id
-                           :dest-objects (:objects container))
+                           :dest-objects (:objects page))
 
          ;; Fix empty parent-id and remap all grid cells to the new ids.
          remap-ids
@@ -498,7 +437,12 @@
 (defn- invalid-structure-for-component?
   "Check if the structure generated nesting children in parent is invalid in terms of nested components"
   [objects parent children pasting? libraries]
-  (let [; When we are pasting, the main shapes will be pasted as copies, unless the
+  (let [; If the original shapes had been cutted, and we are pasting them now, they aren't
+        ; in objects. We can add them to locate later
+        objects (merge objects
+                       (into {} (map (juxt :id identity) children)))
+
+        ; When we are pasting, the main shapes will be pasted as copies, unless the
         ; original component doesn't exist or is deleted. So for this function purposes, they
         ; are removed from the list
         remove? (fn [shape]
@@ -532,10 +476,36 @@
    (letfn [(get-frame [parent-id]
              (if (cfh/frame-shape? objects parent-id) parent-id (get-in objects [parent-id :frame-id])))]
      (let [parent (get objects parent-id)
-          ;; We can always move the children to the parent they already have
+           ;; We can always move the children to the parent they already have.
+           ;; But if we are pasting, those are new items, so it is considered a change
            no-changes?
-           (->> children (every? #(= parent-id (:parent-id %))))]
-       (if (or no-changes? (not (invalid-structure-for-component? objects parent children pasting? libraries)))
+           (and (->> children (every? #(= parent-id (:parent-id %))))
+                (not pasting?))
+
+           ;; When pasting frames, children have the frames and their children
+           ;; We need to check only the top shapes
+           children-ids (set (map :id children))
+           top-children (remove #(contains? children-ids (:parent-id %)) children)
+
+           ;; Are all the top-children a main-instance of a component?
+           all-main?
+           (->> top-children (every? #(ctk/main-instance? %)))
+
+           ;; Are all the top-children a main-instance of a cutted component?
+           all-comp-cut?
+           (when all-main?
+             (->> top-children
+                  (map #(ctkl/get-component (dm/get-in libraries [(:component-file %) :data])
+                                            (:component-id %)
+                                            true))
+                  (every? :deleted)))]
+       (if (or no-changes?
+               (and (not (invalid-structure-for-component? objects parent children pasting? libraries))
+                    ;; If we are moving into a variant-container, all the items should be main
+                    ;; so if we are pasting, only allow main instances that are cut-and-pasted
+                    (or (not (ctk/is-variant-container? parent))
+                        (and (not pasting?) all-main?)
+                        all-comp-cut?)))
          [parent-id (get-frame parent-id)]
          (recur (:parent-id parent) objects children pasting? libraries))))))
 
@@ -578,8 +548,7 @@
 
         ;; TODO: the check of :width and :height probably may be
         ;; removed after the check added in
-        ;; data/workspace/modifiers/check-delta function. Better check
-        ;; it and test toroughly when activating components-v2 mode.
+        ;; data/workspace/modifiers/check-delta function.
         in-copy?
         (ctk/in-component-copy? shape)
 

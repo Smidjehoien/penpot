@@ -9,7 +9,9 @@
   (:require
    [app.common.data :as d]
    [app.common.data.macros :as dm]
+   [app.common.types.variant :as ctv]
    [app.main.data.workspace :as dw]
+   [app.main.data.workspace.variants :as dwv]
    [app.main.store :as st]
    [app.util.debug :as dbg]
    [app.util.dom :as dom]
@@ -24,12 +26,13 @@
   (-> (l/in [:workspace-local :shape-for-rename])
       (l/derived st/state)))
 
-(mf/defc layer-name
+(mf/defc layer-name*
   {::mf/wrap-props false
    ::mf/forward-ref true}
-  [{:keys [shape-id shape-name shape-touched? disabled-double-click
-           on-start-edit on-stop-edit depth parent-size selected?
-           type-comp type-frame hidden?]} external-ref]
+  [{:keys [shape-id shape-name is-shape-touched disabled-double-click
+           on-start-edit on-stop-edit depth parent-size is-selected
+           type-comp type-frame variant-id variant-name variant-properties
+           component-id is-hidden is-blocked]} external-ref]
   (let [edition*         (mf/use-state false)
         edition?         (deref edition*)
 
@@ -38,26 +41,36 @@
 
         shape-for-rename (mf/deref lens:shape-for-rename)
 
+        shape-name       (d/nilv variant-name shape-name)
+        default-value    (if variant-id
+                           (ctv/properties-map-to-string variant-properties)
+                           shape-name)
+
         has-path?        (str/includes? shape-name "/")
 
         start-edit
         (mf/use-fn
-         (mf/deps disabled-double-click on-start-edit shape-id)
+         (mf/deps disabled-double-click on-start-edit shape-id is-blocked)
          (fn []
-           (when (not disabled-double-click)
+           (when (and (not is-blocked)
+                      (not disabled-double-click))
              (on-start-edit)
              (reset! edition* true)
              (st/emit! (dw/start-rename-shape shape-id)))))
 
         accept-edit
         (mf/use-fn
-         (mf/deps shape-id on-stop-edit)
+         (mf/deps shape-id on-stop-edit component-id variant-id variant-name variant-properties)
          (fn []
            (let [name-input     (mf/ref-val ref)
                  name           (str/trim (dom/get-value name-input))]
              (on-stop-edit)
              (reset! edition* false)
-             (st/emit! (dw/end-rename-shape shape-id name)))))
+             (if variant-name
+               (let [valid? (ctv/valid-properties-string? name)
+                     props  (if valid? (ctv/properties-string-to-map name) {})]
+                 (st/emit! (dwv/update-properties-names-and-values component-id variant-id variant-properties props)))
+               (st/emit! (dw/end-rename-shape shape-id name))))))
 
         cancel-edit
         (mf/use-fn
@@ -96,14 +109,14 @@
         :on-blur accept-edit
         :on-key-down on-key-down
         :auto-focus true
-        :default-value (d/nilv shape-name "")}]
+        :default-value (d/nilv default-value "")}]
       [:*
        [:span
         {:class (stl/css-case
                  :element-name true
                  :left-ellipsis has-path?
-                 :selected selected?
-                 :hidden hidden?
+                 :selected is-selected
+                 :hidden is-hidden
                  :type-comp type-comp
                  :type-frame type-frame)
          :style {"--depth" depth "--parent-size" parent-size}
@@ -112,5 +125,5 @@
         (if (dbg/enabled? :show-ids)
           (str (d/nilv shape-name "") " | " (str/slice (str shape-id) 24))
           (d/nilv shape-name ""))]
-       (when (and (dbg/enabled? :show-touched) ^boolean shape-touched?)
+       (when (and (dbg/enabled? :show-touched) ^boolean is-shape-touched)
          [:span {:class (stl/css :element-name-touched)} "*"])])))

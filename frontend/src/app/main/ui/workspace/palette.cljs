@@ -9,6 +9,7 @@
   (:require
    [app.common.data :as d]
    [app.common.data.macros :as dm]
+   [app.common.uuid :as uuid]
    [app.main.data.event :as ev]
    [app.main.data.workspace :as dw]
    [app.main.data.workspace.colors :as mdc]
@@ -19,8 +20,8 @@
    [app.main.ui.hooks :as h]
    [app.main.ui.hooks.resize :as r]
    [app.main.ui.icons :as i]
-   [app.main.ui.workspace.color-palette :refer [color-palette]]
-   [app.main.ui.workspace.color-palette-ctx-menu :refer [color-palette-ctx-menu]]
+   [app.main.ui.workspace.color-palette :refer [color-palette*]]
+   [app.main.ui.workspace.color-palette-ctx-menu :refer [color-palette-ctx-menu*]]
    [app.main.ui.workspace.text-palette :refer [text-palette]]
    [app.main.ui.workspace.text-palette-ctx-menu :refer [text-palette-ctx-menu]]
    [app.util.dom :as dom]
@@ -87,7 +88,7 @@
                  value (dom/get-attribute node "data-palette")]
              (on-select (if (or (= "file" value) (= "recent" value))
                           (keyword value)
-                          (parse-uuid value))))))
+                          (uuid/parse value))))))
 
         on-select-text-palette-menu
         (mf/use-fn
@@ -195,13 +196,14 @@
                                  :selected selected-text
                                  :width vport-width}]])
             (when color-palette?
-              [:* [:& color-palette-ctx-menu {:show-menu?  show-menu?
-                                              :close-menu on-close-menu
-                                              :on-select-palette on-select-palette
-                                              :selected @selected}]
-               [:& color-palette {:size size
-                                  :selected @selected
-                                  :width vport-width}]])]]
+              [:*
+               [:> color-palette-ctx-menu* {:show show-menu?
+                                            :on-close on-close-menu
+                                            :on-select on-select-palette
+                                            :selected @selected}]
+               [:> color-palette* {:size size
+                                   :selected @selected
+                                   :width vport-width}]])]]
           [:div {:class (stl/css :handler)
                  :on-click toggle-palettes
                  :data-testid "toggle-palettes-visibility"}

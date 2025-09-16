@@ -13,6 +13,7 @@
    [app.common.files.shapes-helpers :as cfsh]
    [app.common.logic.shapes :as cls]
    [app.common.schema :as sm]
+   [app.common.types.component :as ctc]
    [app.common.types.container :as ctn]
    [app.common.types.shape :as cts]
    [app.common.types.shape-tree :as ctst]
@@ -23,7 +24,6 @@
    [app.main.data.workspace.edition :as dwe]
    [app.main.data.workspace.selection :as dws]
    [app.main.data.workspace.undo :as dwu]
-   [app.main.features :as features]
    [beicon.v2.core :as rx]
    [potok.v2.core :as ptk]))
 
@@ -47,14 +47,11 @@
 
 (defn update-shapes
   ([ids update-fn] (update-shapes ids update-fn nil))
-  ([ids update-fn {:keys [reg-objects? save-undo? stack-undo? attrs ignore-tree page-id ignore-touched undo-group with-objects?]
+  ([ids update-fn {:keys [reg-objects? save-undo? stack-undo? attrs ignore-tree page-id ignore-touched undo-group with-objects? changed-sub-attr]
                    :or {reg-objects? false save-undo? true stack-undo? false ignore-touched false with-objects? false}}]
 
-   (dm/assert!
-    "expected a valid coll of uuid's"
-    (sm/check-coll-of-uuid! ids))
-
-   (dm/assert! (fn? update-fn))
+   (assert (sm/check-coll-of-uuid ids))
+   (assert (fn? update-fn))
 
    (ptk/reify ::update-shapes
      ptk/WatchEvent
@@ -76,6 +73,7 @@
                                                      update-fn
                                                      objects
                                                      {:attrs attrs
+                                                      :changed-sub-attr changed-sub-attr
                                                       :ignore-tree ignore-tree
                                                       :ignore-touched ignore-touched
                                                       :with-objects? with-objects?})
@@ -148,7 +146,7 @@
             changes (-> (pcb/empty-changes it page-id)
                         (pcb/with-objects objects))
 
-            changes (cfsh/prepare-move-shapes-into-frame changes frame-id shapes objects)]
+            changes (cfsh/prepare-move-shapes-into-frame changes frame-id shapes objects true)]
 
         (if (some? changes)
           (rx/of (dch/commit-changes changes))
@@ -160,9 +158,7 @@
   ([ids] (delete-shapes nil ids {}))
   ([page-id ids] (delete-shapes page-id ids {}))
   ([page-id ids options]
-   (dm/assert!
-    "expected a valid set of uuid's"
-    (sm/check-set-of-uuid! ids))
+   (assert (sm/check-set-of-uuid ids))
 
    (ptk/reify ::delete-shapes
      ptk/WatchEvent
@@ -174,12 +170,10 @@
              page          (dsh/get-page fdata page-id)
              objects       (:objects page)
 
-             components-v2 (features/active-feature? state "components/v2")
              undo-id (or (:undo-id options) (js/Symbol))
              [all-parents changes] (-> (pcb/empty-changes it (:id page))
                                        (cls/generate-delete-shapes fdata page objects ids
-                                                                   {:components-v2 components-v2
-                                                                    :ignore-touched (:component-swap options)
+                                                                   {:ignore-touched (:component-swap options)
                                                                     :undo-group (:undo-group options)
                                                                     :undo-id undo-id}))]
 
@@ -240,6 +234,8 @@
   ([id parent-id index]
    (create-artboard-from-selection id parent-id index nil))
   ([id parent-id index name]
+   (create-artboard-from-selection id parent-id index name nil))
+  ([id parent-id index name delta]
    (ptk/reify ::create-artboard-from-selection
      ptk/WatchEvent
      (watch [it state _]
@@ -247,7 +243,10 @@
              objects      (dsh/lookup-page-objects state page-id)
              selected     (->> (dsh/lookup-selected state)
                                (cfh/clean-loops objects)
-                               (remove #(ctn/has-any-copy-parent? objects (get objects %))))
+                               (remove #(ctn/has-any-copy-parent? objects (get objects %)))
+                               (remove #(->> %
+                                             (get objects)
+                                             (ctc/is-variant?))))
 
              changes      (-> (pcb/empty-changes it page-id)
                               (pcb/with-objects objects))
@@ -260,7 +259,9 @@
                                                           selected
                                                           index
                                                           name
-                                                          false)
+                                                          false
+                                                          nil
+                                                          delta)
 
              undo-id  (js/Symbol)]
 

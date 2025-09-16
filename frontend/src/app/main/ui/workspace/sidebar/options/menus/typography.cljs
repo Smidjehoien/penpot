@@ -12,6 +12,7 @@
    [app.common.data.macros :as dm]
    [app.common.exceptions :as ex]
    [app.common.text :as txt]
+   [app.main.constants :refer [max-input-length]]
    [app.main.data.common :as dcm]
    [app.main.data.fonts :as fts]
    [app.main.data.shortcuts :as dsc]
@@ -108,6 +109,9 @@
                        (filter-fonts state fonts))
 
         recent-fonts (mf/deref refs/recent-fonts)
+        recent-fonts (mf/with-memo [state recent-fonts]
+                       (filter-fonts state recent-fonts))
+
 
         full-size?   (boolean (and full-size show-recent))
 
@@ -480,6 +484,7 @@
              :type "text"
              :ref name-input-ref
              :default-value (:name typography)
+             :max-length max-input-length
              :on-key-down on-key-down
              :on-blur on-name-blur}]
 
@@ -612,6 +617,7 @@
            :type "text"
            :ref name-input-ref
            :default-value (:name typography)
+           :max-length max-input-length
            :on-key-down on-key-down
            :on-blur on-name-blur}]]
         [:div

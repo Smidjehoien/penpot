@@ -10,6 +10,7 @@
    [app.common.schema :as sm]
    [app.common.types.page :as ctp]
    [app.common.types.plugins :as ctpg]
+   [app.common.types.variant :as ctv]
    [cuerdas.core :as str]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -17,19 +18,21 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (def schema:component
-  [:map
-   [:id ::sm/uuid]
-   [:name :string]
-   [:path {:optional true} [:maybe :string]]
-   [:modified-at {:optional true} ::sm/inst]
-   [:objects {:gen/max 10 :optional true} ::ctp/objects]
-   [:main-instance-id ::sm/uuid]
-   [:main-instance-page ::sm/uuid]
-   [:plugin-data {:optional true} ::ctpg/plugin-data]])
+  [:merge
+   [:map
+    [:id ::sm/uuid]
+    [:name :string]
+    [:path {:optional true} [:maybe :string]]
+    [:modified-at {:optional true} ::sm/inst]
+    [:objects {:gen/max 10 :optional true} ::ctp/objects]
+    [:main-instance-id ::sm/uuid]
+    [:main-instance-page ::sm/uuid]
+    [:plugin-data {:optional true} ::ctpg/plugin-data]]
+   ::ctv/variant-component])
 
 (sm/register! ::component schema:component)
 
-(def check-component!
+(def check-component
   (sm/check-fn schema:component))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -90,8 +93,8 @@
    :constraints-h           :constraints-group
    :constraints-v           :constraints-group
    :fixed-scroll            :constraints-group
-   :bool-type               :bool-group
-   :bool-content            :bool-group
+   :bool-type               :content-group
+   :bool-content            :content-group
    :exports                 :exports-group
    :grids                   :grids-group
 
@@ -179,10 +182,8 @@
        (= (:component-file shape) file-id)))
 
 (defn is-main-of?
-  [shape-main shape-inst components-v2]
-  (or (= (:shape-ref shape-inst) (:id shape-main))
-      (and (= (:shape-ref shape-inst) (:shape-ref shape-main))
-           (not components-v2))))
+  [shape-main shape-inst]
+  (= (:shape-ref shape-inst) (:id shape-main)))
 
 (defn main-instance?
   "Check if this shape is the root of the main instance of some
@@ -214,6 +215,19 @@
   [shape-id page-id component]
   (and (= shape-id (:main-instance-id component))
        (= page-id (:main-instance-page component))))
+
+
+(defn is-variant?
+  "Check if this shape or component is a variant component"
+  [item]
+  (some? (:variant-id item)))
+
+
+(defn is-variant-container?
+  "Check if this shape is a variant container"
+  [shape]
+  (:is-variant-container shape))
+
 
 (defn set-touched-group
   [touched group]

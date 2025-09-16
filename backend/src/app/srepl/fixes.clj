@@ -53,9 +53,9 @@
   fixes all not propertly referenced file-media-object for a file"
   [{:keys [id data] :as file} & _]
   (let [conn  (db/get-connection h/*system*)
-        used  (bfc/collect-used-media data)
+        used  (cfh/collect-used-media data)
         ids   (db/create-array conn "uuid" used)
-        sql   (str "SELECT * FROM file_media_object WHERE id = ANY(?)")
+        sql   "SELECT * FROM file_media_object WHERE id = ANY(?)"
         rows  (db/exec! conn [sql ids])
         index (reduce (fn [index media]
                         (if (not= (:file-id media) id)
@@ -179,7 +179,7 @@
                       component-child (first component-children)]
                   (if (or (nil? child) (nil? component-child))
                     container
-                    (let [container (if (and (not (ctk/is-main-of? component-child child true))
+                    (let [container (if (and (not (ctk/is-main-of? component-child child))
                                              (nil? (ctk/get-swap-slot child))
                                              (ctk/instance-head? child))
                                       (let [slot (guess-swap-slot component-child component-container)]
@@ -272,6 +272,7 @@
                (reduce +)))
 
         num-missing-slots (count-slots-data (:data file))]
+
     (when (pos? num-missing-slots)
       (l/trc :info (str "Shapes with children with the same swap slot: " num-missing-slots) :file-id (str (:id file))))
     file))

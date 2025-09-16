@@ -9,6 +9,7 @@
   (:refer-clojure :exclude [read])
   (:require
    [app.binfile.common :as bfc]
+   [app.binfile.migrations :as bfm]
    [app.common.data :as d]
    [app.common.data.macros :as dm]
    [app.common.exceptions :as ex]
@@ -28,6 +29,7 @@
    [app.common.uuid :as uuid]
    [app.config :as cf]
    [app.db :as db]
+   [app.db.sql :as-alias sql]
    [app.storage :as sto]
    [app.storage.impl :as sto.impl]
    [app.util.events :as events]
@@ -206,24 +208,24 @@
   (.closeEntry output))
 
 (defn- get-file
-  [{:keys [::embed-assets ::include-libraries] :as cfg} file-id]
+  [{:keys [::bfc/embed-assets ::bfc/include-libraries] :as cfg} file-id]
 
   (when (and include-libraries embed-assets)
     (throw (IllegalArgumentException.
             "the `include-libraries` and `embed-assets` are mutally excluding options")))
 
-  (let [detach?  (and (not embed-assets) (not include-libraries))
-        file     (bfc/get-file cfg file-id)]
-    (cond-> file
-      detach?
-      (-> (ctf/detach-external-references file-id)
-          (dissoc :libraries))
+  (let [detach?  (and (not embed-assets) (not include-libraries))]
+    (db/tx-run! cfg (fn [cfg]
+                      (cond-> (bfc/get-file cfg file-id {::sql/for-update true})
+                        detach?
+                        (-> (ctf/detach-external-references file-id)
+                            (dissoc :libraries))
 
-      embed-assets
-      (update :data #(bfc/embed-assets cfg % file-id))
+                        embed-assets
+                        (update :data #(bfc/embed-assets cfg % file-id))
 
-      :always
-      (bfc/clean-file-features))))
+                        :always
+                        (bfc/clean-file-features))))))
 
 (defn- resolve-extension
   [mtype]
@@ -262,6 +264,7 @@
 (defn- export-file
   [{:keys [::file-id ::output] :as cfg}]
   (let [file         (get-file cfg file-id)
+
         media        (->> (bfc/get-file-media cfg file)
                           (map (fn [media]
                                  (dissoc media :file-id))))
@@ -354,7 +357,7 @@
         (write-entry! output path encoded-tokens)))))
 
 (defn- export-files
-  [{:keys [::ids ::include-libraries ::output] :as cfg}]
+  [{:keys [::bfc/ids ::bfc/include-libraries ::output] :as cfg}]
   (let [ids  (into ids (when include-libraries (bfc/get-libraries cfg ids)))
         rels (if include-libraries
                (->> (bfc/get-files-rels cfg ids)
@@ -528,7 +531,7 @@
 
 (defn- match-storage-entry-fn
   []
-  (let [pattern (str "^objects/([^/]+).json$")
+  (let [pattern "^objects/([^/]+).json$"
         pattern (re-pattern pattern)]
     (fn [entry]
       (when-let [[_ id] (re-matches pattern (zip-entry-name entry))]
@@ -546,7 +549,7 @@
     (json/read reader)))
 
 (defn- read-file
-  [{:keys [::input ::file-id]}]
+  [{:keys [::bfc/input ::file-id]}]
   (let [path  (str "files/" file-id ".json")
         entry (get-zip-entry input path)]
     (-> (read-entry input entry)
@@ -554,7 +557,7 @@
         (validate-file))))
 
 (defn- read-file-plugin-data
-  [{:keys [::input ::file-id]}]
+  [{:keys [::bfc/input ::file-id]}]
   (let [path  (str "files/" file-id "/plugin-data.json")
         entry (get-zip-entry* input path)]
     (some->> entry
@@ -563,7 +566,7 @@
              (validate-plugin-data))))
 
 (defn- read-file-media
-  [{:keys [::input ::file-id ::entries]}]
+  [{:keys [::bfc/input ::file-id ::entries]}]
   (->> (keep (match-media-entry-fn file-id) entries)
        (reduce (fn [result {:keys [id entry]}]
                  (let [object (->> (read-entry input entry)
@@ -577,7 +580,7 @@
        (not-empty)))
 
 (defn- read-file-colors
-  [{:keys [::input ::file-id ::entries]}]
+  [{:keys [::bfc/input ::file-id ::entries]}]
   (->> (keep (match-color-entry-fn file-id) entries)
        (reduce (fn [result {:keys [id entry]}]
                  (let [object (->> (read-entry input entry)
@@ -589,21 +592,8 @@
                {})
        (not-empty)))
 
-(defn- read-file-components
-  [{:keys [::input ::file-id ::entries]}]
-  (->> (keep (match-component-entry-fn file-id) entries)
-       (reduce (fn [result {:keys [id entry]}]
-                 (let [object (->> (read-entry input entry)
-                                   (decode-component)
-                                   (validate-component))]
-                   (if (= id (:id object))
-                     (assoc result id object)
-                     result)))
-               {})
-       (not-empty)))
-
 (defn- read-file-typographies
-  [{:keys [::input ::file-id ::entries]}]
+  [{:keys [::bfc/input ::file-id ::entries]}]
   (->> (keep (match-typography-entry-fn file-id) entries)
        (reduce (fn [result {:keys [id entry]}]
                  (let [object (->> (read-entry input entry)
@@ -616,19 +606,55 @@
        (not-empty)))
 
 (defn- read-file-tokens-lib
-  [{:keys [::input ::file-id ::entries]}]
+  [{:keys [::bfc/input ::file-id ::entries]}]
   (when-let [entry (d/seek (match-tokens-lib-entry-fn file-id) entries)]
     (->> (read-plain-entry input entry)
          (decode-tokens-lib)
          (validate-tokens-lib))))
 
-(defn- read-file-shapes
-  [{:keys [::input ::file-id ::page-id ::entries] :as cfg}]
-  (->> (keep (match-shape-entry-fn file-id page-id) entries)
+(defn- pre-decode-migrate-shape
+  "Applies a pre-decode phase migration to the shape"
+  [shape]
+  (if (= "bool" (:type shape))
+    (if-let [content (get shape :bool-content)]
+      (-> shape
+          (assoc :content content)
+          (dissoc :bool-content))
+      shape)
+    shape))
+
+(defn- pre-decode-migrate-component
+  "Applies a pre-decode phase migration to component"
+  [component]
+  (d/update-when component :objects
+                 (fn [objects]
+                   (reduce-kv (fn [objects id shape]
+                                (assoc objects id (pre-decode-migrate-shape shape)))
+                              objects
+                              objects))))
+
+(defn- read-file-components
+  [{:keys [::bfc/input ::file-id ::entries]}]
+  (->> (keep (match-component-entry-fn file-id) entries)
        (reduce (fn [result {:keys [id entry]}]
                  (let [object (->> (read-entry input entry)
-                                   (decode-shape)
-                                   (validate-shape))]
+                                   (pre-decode-migrate-component)
+                                   (decode-component)
+                                   (validate-component))]
+                   (if (= id (:id object))
+                     (assoc result id object)
+                     result)))
+               {})
+       (not-empty)))
+
+(defn- read-file-shapes
+  [{:keys [::bfc/input ::file-id ::page-id ::entries] :as cfg}]
+  (->> (keep (match-shape-entry-fn file-id page-id) entries)
+       (reduce (fn [result {:keys [id entry]}]
+                 (let [object (-> (read-entry input entry)
+                                  (pre-decode-migrate-shape)
+                                  (decode-shape)
+                                  (validate-shape))]
                    (if (= id (:id object))
                      (assoc result id object)
                      result)))
@@ -636,7 +662,7 @@
        (not-empty)))
 
 (defn- read-file-pages
-  [{:keys [::input ::file-id ::entries] :as cfg}]
+  [{:keys [::bfc/input ::file-id ::entries] :as cfg}]
   (->> (keep (match-page-entry-fn file-id) entries)
        (keep (fn [{:keys [id entry]}]
                (let [page (->> (read-entry input entry)
@@ -652,7 +678,7 @@
                (d/ordered-map))))
 
 (defn- read-file-thumbnails
-  [{:keys [::input ::file-id ::entries] :as cfg}]
+  [{:keys [::bfc/input ::file-id ::entries] :as cfg}]
   (->> (keep (match-thumbnail-entry-fn file-id) entries)
        (reduce (fn [result {:keys [page-id frame-id tag entry]}]
                  (let [object (->> (read-entry input entry)
@@ -684,7 +710,7 @@
      :plugin-data plugin-data}))
 
 (defn- import-file
-  [{:keys [::db/conn ::project-id ::file-id ::file-name] :as cfg}]
+  [{:keys [::bfc/project-id ::file-id ::file-name] :as cfg}]
   (let [file-id'   (bfc/lookup-index file-id)
         file       (read-file cfg)
         media      (read-file-media cfg)
@@ -732,12 +758,8 @@
                    (dissoc :options)
                    (bfc/process-file))]
 
-      (->> file
-           (bfc/register-pending-migrations cfg)
-           (bfc/persist-file! cfg))
-
-      (when (::bfc/overwrite cfg)
-        (db/delete! conn :file-thumbnail {:file-id file-id'}))
+      (bfm/register-pending-migrations! cfg file)
+      (bfc/save-file! cfg file ::db/return-keys false)
 
       file-id')))
 
@@ -760,7 +782,7 @@
                      :library-file-id libr-id})))))
 
 (defn- import-storage-objects
-  [{:keys [::input ::entries ::bfc/timestamp] :as cfg}]
+  [{:keys [::bfc/input ::entries ::bfc/timestamp] :as cfg}]
   (events/tap :progress {:section :storage-objects})
 
   (let [storage (sto/resolve cfg)
@@ -832,8 +854,7 @@
              :file-id (str (:file-id params))
              ::l/sync? true)
 
-      (db/insert! conn :file-media-object params
-                  {::db/on-conflict-do-nothing? (::bfc/overwrite cfg)}))))
+      (db/insert! conn :file-media-object params))))
 
 (defn- import-file-thumbnails
   [{:keys [::db/conn] :as cfg}]
@@ -853,11 +874,10 @@
              :media-id (str media-id)
              ::l/sync? true)
 
-      (db/insert! conn :file-tagged-object-thumbnail params
-                  {::db/on-conflict-do-nothing? (::bfc/overwrite cfg)}))))
+      (db/insert! conn :file-tagged-object-thumbnail params))))
 
 (defn- import-files
-  [{:keys [::bfc/timestamp ::input ::name] :or {timestamp (dt/now)} :as cfg}]
+  [{:keys [::bfc/timestamp ::bfc/input ::bfc/name] :or {timestamp (dt/now)} :as cfg}]
 
   (dm/assert!
    "expected zip file"
@@ -878,14 +898,17 @@
                 :manifest manifest))
 
     ;; Check if all files referenced on manifest are present
-    (doseq [{file-id :id} (:files manifest)]
+    (doseq [{file-id :id features :features} (:files manifest)]
       (let [path (str "files/" file-id ".json")]
+
         (when-not (get-zip-entry input path)
           (ex/raise :type :validation
                     :code :invalid-binfile-v3
                     :hint "some files referenced on manifest not found"
                     :path path
-                    :file-id file-id))))
+                    :file-id file-id))
+
+        (cfeat/check-supported-features! features)))
 
     (events/tap :progress {:section :manifest})
 
@@ -915,7 +938,7 @@
                             (import-file-media cfg)
                             (import-file-thumbnails cfg)
 
-                            (bfc/apply-pending-migrations! cfg)
+                            (bfm/apply-pending-migrations! cfg)
 
                             ids)))))))
 
@@ -925,17 +948,17 @@
   "Do the exportation of a specified file in custom penpot binary
   format. There are some options available for customize the output:
 
-  `::include-libraries`: additionally to the specified file, all the
+  `::bfc/include-libraries`: additionally to the specified file, all the
   linked libraries also will be included (including transitive
   dependencies).
 
-  `::embed-assets`: instead of including the libraries, embed in the
+  `::bfc/embed-assets`: instead of including the libraries, embed in the
   same file library all assets used from external libraries."
 
-  [{:keys [::ids] :as cfg} output]
+  [{:keys [::bfc/ids] :as cfg} output]
 
   (dm/assert!
-   "expected a set of uuid's for `::ids` parameter"
+   "expected a set of uuid's for `::bfc/ids` parameter"
    (and (set? ids)
         (every? uuid? ids)))
 
@@ -977,14 +1000,13 @@
                 :aborted @ab
                 :cause @cs)))))
 
-
 (defn import-files!
-  [{:keys [::input] :as cfg}]
+  [{:keys [::bfc/input] :as cfg}]
 
   (dm/assert!
    "expected valid profile-id and project-id on `cfg`"
-   (and (uuid? (::profile-id cfg))
-        (uuid? (::project-id cfg))))
+   (and (uuid? (::bfc/profile-id cfg))
+        (uuid? (::bfc/project-id cfg))))
 
   (dm/assert!
    "expected instance of jio/IOFactory for `input`"
@@ -997,7 +1019,7 @@
     (l/info :hint "import: started" :id (str id))
     (try
       (with-open [input (ZipFile. (fs/file input))]
-        (import-files (assoc cfg ::input input)))
+        (import-files (assoc cfg ::bfc/input input)))
 
       (catch Throwable cause
         (vreset! cs cause)

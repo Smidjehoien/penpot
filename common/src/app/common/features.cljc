@@ -52,7 +52,8 @@
     "plugins/runtime"
     "design-tokens/v1"
     "text-editor/v2"
-    "render-wasm/v1"})
+    "render-wasm/v1"
+    "variants/v1"})
 
 ;; A set of features enabled by default
 (def default-features
@@ -60,7 +61,8 @@
     "styles/v2"
     "layout/grid"
     "components/v2"
-    "plugins/runtime"})
+    "plugins/runtime"
+    "design-tokens/v1"})
 
 ;; A set of features which only affects on frontend and can be enabled
 ;; and disabled freely by the user any time. This features does not
@@ -83,12 +85,11 @@
 ;; be applied (per example backend can operate in both modes with or
 ;; without migration applied)
 (def no-migration-features
-  (-> #{"fdata/objects-map"
-        "fdata/pointer-map"
-        "layout/grid"
+  (-> #{"layout/grid"
         "fdata/shape-data-type"
         "design-tokens/v1"}
-      (into frontend-only-features)))
+      (into frontend-only-features)
+      (into backend-only-features)))
 
 (sm/register!
  ^{::sm/type ::features}
@@ -102,15 +103,14 @@
   "Translate a flag to a feature name"
   [flag]
   (case flag
-    :feature-components-v2 "components/v2"
     :feature-styles-v2 "styles/v2"
-    :feature-grid-layout "layout/grid"
     :feature-fdata-objects-map "fdata/objects-map"
     :feature-fdata-pointer-map "fdata/pointer-map"
     :feature-plugins "plugins/runtime"
     :feature-design-tokens "design-tokens/v1"
     :feature-text-editor-v2 "text-editor/v2"
     :feature-render-wasm "render-wasm/v1"
+    :feature-variants "variants/v1"
     nil))
 
 (defn migrate-legacy-features
@@ -141,7 +141,7 @@
   (keep flag->feature))
 
 (defn get-enabled-features
-  "Get the globally enabled fratures set."
+  "Get the globally enabled features set."
   [flags]
   (into default-features xf-flag-to-feature flags))
 
@@ -155,7 +155,6 @@
         team-features    (into #{} xf-remove-ephimeral (:features team))]
     (-> enabled-features
         (set/intersection no-migration-features)
-        (set/difference frontend-only-features)
         (set/union team-features))))
 
 (defn check-client-features!
@@ -164,6 +163,8 @@
   frontend client"
   [enabled-features client-features]
   (when (set? client-features)
+    ;; Check if client declares support for features enabled on
+    ;; backend side
     (let [not-supported (-> enabled-features
                             (set/difference client-features)
                             (set/difference frontend-only-features)
@@ -173,14 +174,6 @@
                   :code :feature-not-supported
                   :feature (first not-supported)
                   :hint (str/ffmt "client declares no support for '%' features"
-                                  (str/join "," not-supported)))))
-
-    (let [not-supported (set/difference client-features supported-features)]
-      (when (seq not-supported)
-        (ex/raise :type :restriction
-                  :code :feature-not-supported
-                  :feature (first not-supported)
-                  :hint (str/ffmt "backend does not support '%' features requested by client"
                                   (str/join "," not-supported))))))
 
   enabled-features)
@@ -191,57 +184,55 @@
   supported by the current backend"
   [enabled-features]
   (let [not-supported (set/difference enabled-features supported-features)]
-    (when (seq not-supported)
+    (when-let [not-supported (first not-supported)]
       (ex/raise :type :restriction
                 :code :feature-not-supported
-                :feature (first not-supported)
-                :hint (str/ffmt "features '%' not supported"
-                                (str/join "," not-supported)))))
-  enabled-features)
+                :feature not-supported
+                :hint (str/ffmt "feature '%' not supported on this backend" not-supported)))
+    enabled-features))
 
 (defn check-file-features!
   "Function used for check feature compability between currently
   enabled features set on backend with the provided featured set by
   the penpot file"
-  ([enabled-features file-features]
-   (check-file-features! enabled-features file-features #{}))
-  ([enabled-features file-features client-features]
-   (let [file-features   (into #{} xf-remove-ephimeral file-features)
-         ;; We should ignore all features that does not match with the
-         ;; `no-migration-features` set because we can't enable them
-         ;; as-is, because they probably need migrations
-         client-features (set/intersection client-features no-migration-features)]
-     (let [not-supported (-> enabled-features
-                             (set/union client-features)
-                             (set/difference file-features)
-                             ;; NOTE: we don't want to raise a feature-mismatch
-                             ;; exception for features which don't require an
-                             ;; explicit file migration process or has no real
-                             ;; effect on file data structure
-                             (set/difference no-migration-features))]
-       (when (seq not-supported)
-         (ex/raise :type :restriction
-                   :code :file-feature-mismatch
-                   :feature (first not-supported)
-                   :hint (str/ffmt "enabled features '%' not present in file (missing migration)"
-                                   (str/join "," not-supported)))))
+  [enabled-features file-features]
+  (let [file-features (into #{} xf-remove-ephimeral file-features)
+        not-supported (-> enabled-features
+                          (set/difference file-features)
+                          ;; NOTE: we don't want to raise a feature-mismatch
+                          ;; exception for features which don't require an
+                          ;; explicit file migration process or has no real
+                          ;; effect on file data structure
+                          (set/difference no-migration-features))]
 
-     (check-supported-features! file-features)
+    (when-let [not-supported (first not-supported)]
+      (ex/raise :type :restriction
+                :code :file-feature-mismatch
+                :feature not-supported
+                :hint (str/ffmt "enabled feature '%' not present in file (missing migration)"
+                                not-supported)))
 
-     (let [not-supported (-> file-features
-                             (set/difference enabled-features)
-                             (set/difference client-features)
-                             (set/difference backend-only-features)
-                             (set/difference frontend-only-features))]
+    (check-supported-features! file-features)
 
-       (when (seq not-supported)
-         (ex/raise :type :restriction
-                   :code :file-feature-mismatch
-                   :feature (first not-supported)
-                   :hint (str/ffmt "file features '%' not enabled"
-                                   (str/join "," not-supported))))))
+    ;; Components v1 is deprecated
+    (when-not (contains? file-features "components/v2")
+      (ex/raise :type :restriction
+                :code :file-in-components-v1
+                :hint "components v1 is deprecated"))
 
-   enabled-features))
+    (let [not-supported (-> file-features
+                            (set/difference enabled-features)
+                            (set/difference backend-only-features)
+                            (set/difference frontend-only-features))]
+
+      ;; Check if file has a feature but that feature is not enabled
+      (when-let [not-supported (first not-supported)]
+        (ex/raise :type :restriction
+                  :code :file-feature-mismatch
+                  :feature not-supported
+                  :hint (str/ffmt "file feature '%' not enabled" not-supported))))
+
+    enabled-features))
 
 (defn check-teams-compatibility!
   [{source-features :features} {destination-features :features}]

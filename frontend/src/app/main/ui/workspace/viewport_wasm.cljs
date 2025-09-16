@@ -26,7 +26,6 @@
    [app.main.ui.workspace.shapes.text.editor :as editor-v1]
    [app.main.ui.workspace.shapes.text.text-edition-outline :refer [text-edition-outline]]
    [app.main.ui.workspace.shapes.text.v2-editor :as editor-v2]
-   [app.main.ui.workspace.shapes.text.viewport-texts-html :as stvh]
    [app.main.ui.workspace.viewport.actions :as actions]
    [app.main.ui.workspace.viewport.comments :as comments]
    [app.main.ui.workspace.viewport.debug :as wvd]
@@ -112,7 +111,7 @@
         text-modifiers    (mf/deref refs/workspace-text-modifier)
 
         objects-modified  (mf/with-memo [base-objects text-modifiers modifiers]
-                            (binding [cts/*wasm-sync* true]
+                            (binding [cts/*wasm-sync* false]
                               (apply-modifiers-to-selected selected base-objects text-modifiers modifiers)))
 
         selected-shapes   (keep (d/getf objects-modified) selected)
@@ -132,6 +131,7 @@
         frame-hover       (mf/use-state nil)
         active-frames     (mf/use-state #{})
         canvas-init?      (mf/use-state false)
+        initialized?      (mf/use-state false)
 
         ;; REFS
         [viewport-ref
@@ -291,24 +291,21 @@
       (when @canvas-init?
         (wasm.api/resize-viewbox (:width vport) (:height vport))))
 
-    (mf/with-effect [@canvas-init?  base-objects]
-      (when @canvas-init?
-        (wasm.api/set-objects base-objects)))
-
     (mf/with-effect [@canvas-init? preview-blend]
       (when (and @canvas-init? preview-blend)
         (wasm.api/request-render "with-effect")))
 
-    (mf/with-effect [@canvas-init? vbox]
-      (when @canvas-init?
-        (wasm.api/set-view-zoom zoom vbox)))
+    (mf/with-effect [@canvas-init? zoom vbox background]
+      (when (and @canvas-init? (not @initialized?))
+        (wasm.api/initialize base-objects zoom vbox background)
+        (reset! initialized? true)))
 
-    (mf/with-effect [@canvas-init? vbox]
-      (when @canvas-init?
+    (mf/with-effect [vbox zoom]
+      (when (and @canvas-init? initialized?)
         (wasm.api/set-view-box zoom vbox)))
 
-    (mf/with-effect [@canvas-init? background]
-      (when @canvas-init?
+    (mf/with-effect [background]
+      (when (and @canvas-init? initialized?)
         (wasm.api/set-canvas-background background)))
 
     (hooks/setup-dom-events zoom disable-paste in-viewport? read-only? drawing-tool drawing-path?)
@@ -324,27 +321,11 @@
      (when (:can-edit permissions)
        [:& top-bar/top-bar {:layout layout}])
      [:div {:class (stl/css :viewport-overlays)}
-      ;; The behaviour inside a foreign object is a bit different that in plain HTML so we wrap
-      ;; inside a foreign object "dummy" so this awkward behaviour is take into account
-      [:svg {:style {:top 0 :left 0 :position "fixed" :width "100%" :height "100%" :opacity (when-not (dbg/enabled? :html-text) 0)}}
-       [:foreignObject {:x 0 :y 0 :width "100%" :height "100%"}
-        [:div {:style {:pointer-events (when-not (dbg/enabled? :html-text) "none")
-                       ;; some opacity because to debug auto-width events will fill the screen
-                       :opacity 0.6}}
-         (when (and (:can-edit permissions) (not read-only?))
-           [:& stvh/viewport-texts
-            {:key (dm/str "texts-" page-id)
-             :page-id page-id
-             :objects objects
-             :modifiers modifiers
-             :edition edition}])]]]
-
       (when show-comments?
         [:> comments/comments-layer* {:vbox vbox
                                       :page-id page-id
                                       :vport vport
-                                      :zoom zoom
-                                      :drawing drawing}])
+                                      :zoom zoom}])
 
       (when picking-color?
         [:& pixel-overlay/pixel-overlay {:vport vport
@@ -485,7 +466,7 @@
            :shift? @shift?}])
 
        [:& widgets/frame-titles
-        {:objects base-objects
+        {:objects (with-meta objects-modified nil)
          :selected selected
          :zoom zoom
          :show-artboard-names? show-artboard-names?

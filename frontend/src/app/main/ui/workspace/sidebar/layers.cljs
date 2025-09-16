@@ -12,7 +12,6 @@
    [app.common.files.helpers :as cfh]
    [app.common.types.shape :as cts]
    [app.common.uuid :as uuid]
-   [app.config :as cf]
    [app.main.data.workspace :as dw]
    [app.main.refs :as refs]
    [app.main.store :as st]
@@ -146,6 +145,7 @@
                   (conj :rect :circle :path :bool))]
     (or (= uuid/zero id)
         (and (or (str/includes? (str/lower (:name shape)) (str/lower search))
+                 (str/includes? (str/lower (:variant-name shape)) (str/lower search))
                  ;; Only for local development we allow search for ids. Otherwise will be hard
                  ;; search for numbers or single letter shape names (ie: "A")
                  (and *assert*
@@ -337,7 +337,7 @@
                    :on-click add-filter}
               [:div {:class (stl/css :filter-menu-item-name-wrapper)}
                [:span {:class (stl/css :filter-menu-item-icon)}
-                (if (cf/external-feature-flag "boards-01" "test") i/board-2 i/board)]
+                i/board]
                [:span {:class (stl/css :filter-menu-item-name)}
                 (tr "workspace.sidebar.layers.frames")]]
 

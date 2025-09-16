@@ -10,6 +10,7 @@
    [app.common.files.changes-builder :as pcb]
    [app.common.files.helpers :as cfh]
    [app.common.geom.shapes :as gsh]
+   [app.common.logic.variant-properties :as clvp]
    [app.common.types.component :as ctk]
    [app.common.types.container :as ctn]
    [app.common.types.shape.interactions :as ctsi]
@@ -20,13 +21,13 @@
 (defn- generate-unapply-tokens
   "When updating attributes that have a token applied, we must unapply it, because the value
    of the attribute now has been given directly, and does not come from the token."
-  [changes objects]
+  [changes objects changed-sub-attr]
   (let [mod-obj-changes (->> (:redo-changes changes)
                              (filter #(= (:type %) :mod-obj)))
 
         check-attr (fn [shape changes attr]
                      (let [tokens      (get shape :applied-tokens {})
-                           token-attrs (cto/shape-attr->token-attrs attr)]
+                           token-attrs (cto/shape-attr->token-attrs attr changed-sub-attr)]
                        (if (some #(contains? tokens %) token-attrs)
                          (pcb/update-shapes changes [(:id shape)] #(cto/unapply-token-id % token-attrs))
                          changes)))
@@ -44,7 +45,7 @@
             mod-obj-changes)))
 
 (defn generate-update-shapes
-  [changes ids update-fn objects {:keys [attrs ignore-tree ignore-touched with-objects?]}]
+  [changes ids update-fn objects {:keys [attrs changed-sub-attr ignore-tree ignore-touched with-objects?]}]
   (let [changes   (reduce
                    (fn [changes id]
                      (let [opts {:attrs attrs
@@ -61,7 +62,7 @@
                     (pcb/reorder-grid-children ids)
                     (cond->
                      (not ignore-touched)
-                      (generate-unapply-tokens objects)))]
+                      (generate-unapply-tokens objects changed-sub-attr)))]
     changes))
 
 (defn- generate-update-shape-flags
@@ -79,7 +80,7 @@
         (pcb/update-shapes ids update-fn {:attrs #{:blocked :hidden}}))))
 
 (defn generate-delete-shapes
-  [changes file page objects ids {:keys [components-v2 ignore-touched component-swap]}]
+  [changes file page objects ids {:keys [ignore-touched component-swap]}]
   (let [ids           (cfh/clean-loops objects ids)
 
         in-component-copy?
@@ -94,21 +95,20 @@
                  (not component-swap))))
 
         [ids-to-delete ids-to-hide]
-        (if components-v2
-          (loop [ids-seq       (seq ids)
-                 ids-to-delete []
-                 ids-to-hide   []]
-            (let [id (first ids-seq)]
-              (if (nil? id)
-                [ids-to-delete ids-to-hide]
-                (if (in-component-copy? id)
-                  (recur (rest ids-seq)
-                         ids-to-delete
-                         (conj ids-to-hide id))
-                  (recur (rest ids-seq)
-                         (conj ids-to-delete id)
-                         ids-to-hide)))))
-          [ids []])
+        (loop [ids-seq       (seq ids)
+               ids-to-delete []
+               ids-to-hide   []]
+          (let [id (first ids-seq)]
+            (if (nil? id)
+              [ids-to-delete ids-to-hide]
+              (if (in-component-copy? id)
+                (recur (rest ids-seq)
+                       ids-to-delete
+                       (conj ids-to-hide id))
+                (recur (rest ids-seq)
+                       (conj ids-to-delete id)
+                       ids-to-hide)))))
+
 
         changes (-> changes
                     (pcb/with-page page)
@@ -187,16 +187,15 @@
           #{})
 
         components-to-delete
-        (if components-v2
-          (reduce (fn [components id]
-                    (let [shape (get objects id)]
-                      (if (and (= (:component-file shape) (:id file)) ;; Main instances should exist only in local file
-                               (:main-instance shape))                ;; but check anyway
-                        (conj components (:component-id shape))
-                        components)))
-                  []
-                  (into ids-to-delete all-children))
-          [])
+        (reduce (fn [components id]
+                  (let [shape (get objects id)]
+                    (if (and (= (:component-file shape) (:id file)) ;; Main instances should exist only in local file
+                             (:main-instance shape))                ;; but check anyway
+                      (conj components (:component-id shape))
+                      components)))
+                []
+                (into ids-to-delete all-children))
+
 
         ids-set (set ids-to-delete)
 
@@ -239,21 +238,21 @@
 
 
 (defn generate-relocate
-  [changes objects parent-id page-id to-index ids & {:keys [cell ignore-parents?]}]
-  (let [ids    (cfh/order-by-indexed-shapes objects ids)
-        shapes (map (d/getf objects) ids)
-        parent (get objects parent-id)
+  [changes parent-id to-index ids & {:keys [cell ignore-parents?]}]
+  (let [objects     (pcb/get-objects changes)
+        ids         (cfh/order-by-indexed-shapes objects ids)
+        shapes      (map (d/getf objects) ids)
+        parent      (get objects parent-id)
         all-parents (into #{parent-id} (map #(cfh/get-parent-id objects %)) ids)
-        parents  (if ignore-parents? #{parent-id} all-parents)
+        parents     (if ignore-parents? #{parent-id} all-parents)
 
-        children-ids
-        (->> ids
-             (mapcat #(cfh/get-children-ids-with-self objects %)))
+        children-ids (mapcat #(cfh/get-children-ids-with-self objects %) ids)
 
-        child-heads
-        (->> ids
-             (mapcat #(ctn/get-child-heads objects %))
-             (map :id))
+        child-heads (mapcat #(ctn/get-child-heads objects %) ids)
+
+        child-heads-ids (map :id child-heads)
+
+        variant-shapes (filter ctk/is-variant? shapes)
 
         component-main-parent
         (ctn/find-component-main objects parent false)
@@ -340,9 +339,6 @@
         cell (or cell (and index-cell-data [(:row index-cell-data) (:column index-cell-data)]))]
 
     (-> changes
-        (pcb/with-page-id page-id)
-        (pcb/with-objects objects)
-
         ;; Remove layout-item properties when moving a shape outside a layout
         (cond-> (not (ctl/any-layout? parent))
           (pcb/update-shapes ids ctl/remove-layout-item-data))
@@ -353,7 +349,7 @@
 
         ;; Remove the swap slots if it is moving to a different component
         (pcb/update-shapes
-         child-heads
+         child-heads-ids
          (fn [shape]
            (cond-> shape
              (not= component-main-parent (ctn/find-component-main objects shape false))
@@ -365,7 +361,15 @@
 
         ;; Add component-root property when moving a component outside a component
         (cond-> (not (ctn/get-instance-root objects parent))
-          (pcb/update-shapes child-heads #(assoc % :component-root true)))
+          (pcb/update-shapes child-heads-ids #(assoc % :component-root true)))
+
+        ;; Remove variant info and rename when moving outside a variant-container
+        (cond-> (not (ctk/is-variant-container? parent))
+          (clvp/generate-make-shapes-no-variant variant-shapes))
+
+        ;; Add variant info and rename when moving into a different variant-container
+        (cond-> (ctk/is-variant-container? parent)
+          (clvp/generate-make-shapes-variant child-heads parent))
 
         ;; Move the shapes
         (pcb/change-parent parent-id

@@ -9,6 +9,8 @@
    [app.common.data.macros :as dm]
    [app.main.style :as stl])
   (:require
+   [app.common.data :as d]
+   [app.main.constants :refer [max-input-length]]
    [app.main.ui.ds.controls.shared.options-dropdown :refer [options-dropdown*]]
    [app.main.ui.ds.foundations.assets.icon :refer [icon* icon-list] :as i]
    [app.util.array :as array]
@@ -56,8 +58,11 @@
 
 (def ^:private schema:combobox
   [:map
-   [:options [:vector {:min 1} schema:combobox-option]]
+   [:id {:optional true} :string]
+   [:options [:vector schema:combobox-option]]
    [:class {:optional true} :string]
+   [:max-length {:optional true} :int]
+   [:placeholder {:optional true} :string]
    [:disabled {:optional true} :boolean]
    [:default-selected {:optional true} :string]
    [:on-change {:optional true} fn?]
@@ -66,10 +71,11 @@
 (mf/defc combobox*
   {::mf/props :obj
    ::mf/schema schema:combobox}
-  [{:keys [options class disabled has-error default-selected on-change] :rest props}]
+  [{:keys [id options class placeholder disabled has-error default-selected on-change max-length] :rest props}]
   (let [open* (mf/use-state false)
         open  (deref open*)
 
+        ;;use-memo-equal
         selected* (mf/use-state  default-selected)
         selected  (deref selected*)
 
@@ -177,11 +183,12 @@
                                      (mod (+ index 1) len))]
                      (handle-focus-change options focused* new-index options-nodes-refs))
 
-                   (or (kbd/space? event) (kbd/enter? event))
+                   (kbd/enter? event)
                    (when (deref open*)
                      (dom/prevent-default event)
                      (handle-selection focused* selected* open*)
-                     (when (fn? on-change)
+                     (when (and (fn? on-change)
+                                (some? focused))
                        (on-change focused)))
 
                    (kbd/esc? event)
@@ -191,7 +198,7 @@
         on-input-change
         (mf/use-fn
          (fn [event]
-           (let [value (.-value (.-currentTarget event))]
+           (let [value (-> event dom/get-target dom/get-value)]
              (reset! selected* value)
              (reset! filter-value* value)
              (reset! focused* nil)
@@ -208,6 +215,11 @@
 
     (mf/with-effect [options]
       (mf/set-ref-val! options-ref options))
+
+    (mf/use-effect
+     (mf/deps default-selected)
+     (fn []
+       (reset! selected* default-selected)))
 
     [:div {:ref combobox-ref
            :class (stl/css-case
@@ -226,29 +238,35 @@
          [:> icon* {:icon-id icon
                     :size "s"
                     :aria-hidden true}])
-       [:input {:type "text"
+       [:input {:id id
+                :type "text"
                 :role "combobox"
+                :autoComplete "off"
                 :aria-autocomplete "both"
                 :aria-expanded open
                 :aria-controls listbox-id
                 :aria-activedescendant focused
                 :class (stl/css :input)
                 :data-testid "combobox-input"
+                :maxlength (d/nilv max-length max-input-length)
                 :disabled disabled
                 :value selected
                 :on-change on-input-change
+                :placeholder placeholder
                 :on-key-down on-key-down}]]
 
-      [:> :button {:tab-index "-1"
-                   :aria-expanded open
-                   :aria-controls listbox-id
-                   :class (stl/css :button-toggle-list)
-                   :on-click on-click}
-       [:> icon* {:icon-id i/arrow
-                  :class (stl/css :arrow)
-                  :size "s"
-                  :aria-hidden true
-                  :data-testid "combobox-open-button"}]]]
+      (when (d/not-empty? options)
+        [:> :button {:type "button"
+                     :tab-index "-1"
+                     :aria-expanded open
+                     :aria-controls listbox-id
+                     :class (stl/css :button-toggle-list)
+                     :on-click on-click}
+         [:> icon* {:icon-id i/arrow
+                    :class (stl/css :arrow)
+                    :size "s"
+                    :aria-hidden true
+                    :data-testid "combobox-open-button"}]])]
 
      (when (and open (seq dropdown-options))
        [:> options-dropdown* {:on-click on-option-click

@@ -25,7 +25,6 @@
   (let [claims (-> {}
                    (into (::session/token-claims request))
                    (into (::actoken/token-claims request)))]
-
     {:request/path       (:path request)
      :request/method     (:method request)
      :request/params     (:params request)
@@ -55,13 +54,17 @@
    ::yres/body (ex-data err)})
 
 (defmethod handle-error :restriction
-  [err _ _]
+  [err request _]
   (let [{:keys [code] :as data} (ex-data err)]
     (if (= code :method-not-allowed)
       {::yres/status 405
        ::yres/body data}
-      {::yres/status 400
-       ::yres/body data})))
+
+      (binding [l/*context* (request->context request)]
+        (l/err :hint "restriction error"
+               :cause err)
+        {::yres/status 400
+         ::yres/body data}))))
 
 (defmethod handle-error :rate-limit
   [err _ _]
@@ -99,7 +102,7 @@
       (= code :invalid-image)
       (binding [l/*context* (request->context request)]
         (let [cause (or parent-cause err)]
-          (l/warn :hint "unexpected error on processing image" :cause cause)
+          (l/warn :hint "image process error" :cause cause)
           {::yres/status 400 ::yres/body data}))
 
       :else
@@ -174,7 +177,7 @@
   (let [state (.getSQLState ^java.sql.SQLException error)
         cause (or parent-cause error)]
     (binding [l/*context* (request->context request)]
-      (l/error :hint "PSQL error"
+      (l/error :hint "postgresql error"
                :cause cause)
       (cond
         (= state "57014")

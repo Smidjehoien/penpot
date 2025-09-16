@@ -39,7 +39,7 @@
 ;;
 ;;   5. If any track still has an infinite growth limit set its growth limit to its base size.
 
-;;   - Distribute extra space accross spaned tracks
+;; - Distribute extra space accross spaned tracks
 ;; - Maximize tracks
 ;;
 ;; - Expand flexible tracks
@@ -198,7 +198,7 @@
 
     track-list))
 
-(defn add-auto-size
+(defn stretch-tracks
   [track-list add-size]
   (->> track-list
        (mapv (fn [{:keys [type size max-size] :as track}]
@@ -212,8 +212,10 @@
         (if (= type :column)
           [:column :column-span]
           [:row :row-span])
-        from-idx (dec (get cell prop))
-        to-idx (+ (dec (get cell prop)) (get cell prop-span))
+        from-idx (-> (dec (get cell prop))
+                     (mth/clamp 0 (dec (count track-list))))
+        to-idx (-> (+ (dec (get cell prop)) (get cell prop-span))
+                   (mth/clamp 0 (dec (count track-list))))
         tracks (subvec track-list from-idx to-idx)]
     (some? (->> tracks (d/seek #(= :flex (:type %)))))))
 
@@ -291,8 +293,10 @@
               (fn [allocated cell]
                 (let [shape-id (first (:shapes cell))
 
-                      from-idx (dec (get cell prop))
-                      to-idx (+ (dec (get cell prop)) (get cell prop-span))
+                      from-idx (-> (dec (get cell prop))
+                                   (mth/clamp 0 (dec (count track-list))))
+                      to-idx (-> (+ (dec (get cell prop)) (get cell prop-span))
+                                 (mth/clamp 0 (dec (count track-list))))
 
                       indexed-tracks (subvec (d/enumerate track-list) from-idx to-idx)
                       to-allocate (size-to-allocate type parent (get children-map shape-id) cell bounds objects)
@@ -353,7 +357,8 @@
                       to-idx (+ (dec (get cell prop)) (get cell prop-span))
                       indexed-tracks (subvec (d/enumerate track-list) from-idx to-idx)
 
-                      to-allocate (size-to-allocate type parent (get children-map shape-id) cell bounds objects)
+                      to-allocate
+                      (size-to-allocate type parent (get children-map shape-id) cell bounds objects)
 
                       ;; Remove the size and the tracks that are not allocated
                       [to-allocate total-frs indexed-tracks]
@@ -489,11 +494,11 @@
 
          column-tracks (cond-> column-tracks
                          (= :stretch (:layout-justify-content parent))
-                         (add-auto-size column-add-auto))
+                         (stretch-tracks column-add-auto))
 
          row-tracks    (cond-> row-tracks
                          (= :stretch (:layout-align-content parent))
-                         (add-auto-size row-add-auto))
+                         (stretch-tracks row-add-auto))
 
          column-total-size (tracks-total-size column-tracks)
          row-total-size    (tracks-total-size row-tracks)
@@ -597,11 +602,10 @@
             row (nth row-tracks (dec (:row grid-cell)) nil)
 
             column-start-p (:start-p column)
-            row-start-p (:start-p row)
-
-            start-p (gpt/add origin
-                             (gpt/add
-                              (gpt/to-vec origin column-start-p)
-                              (gpt/to-vec origin row-start-p)))]
-
-        (assoc grid-cell :start-p  start-p)))))
+            row-start-p (:start-p row)]
+        (when (and (some? column-start-p) (some? row-start-p))
+          (let [start-p (gpt/add origin
+                                 (gpt/add
+                                  (gpt/to-vec origin column-start-p)
+                                  (gpt/to-vec origin row-start-p)))]
+            (assoc grid-cell :start-p  start-p)))))))

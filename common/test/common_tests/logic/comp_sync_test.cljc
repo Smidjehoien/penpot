@@ -195,10 +195,10 @@
         page      (thf/current-page file)
 
         ;; ==== Action
-        changes1 (cls/generate-relocate (pcb/empty-changes)
-                                        (:objects page)
+        changes1 (cls/generate-relocate (-> (pcb/empty-changes nil)
+                                            (pcb/with-page-id (:id page))
+                                            (pcb/with-objects (:objects page)))
                                         (thi/id :main-root)       ; parent-id
-                                        (:id page)                ; page-id
                                         0                         ; to-index
                                         #{(thi/id :free-shape)})   ; ids
 
@@ -227,7 +227,7 @@
     (t/is (= (:touched copy-root') nil))
     (t/is (= (:touched copy-new-child') nil))
     (t/is (ctst/parent-of? copy-root' copy-new-child'))
-    (t/is (ctk/is-main-of? main-free-shape' copy-new-child' true))))
+    (t/is (ctk/is-main-of? main-free-shape' copy-new-child'))))
 
 (t/deftest test-sync-when-deleting-shape
   (let [;; ==== Setup
@@ -292,10 +292,10 @@
         main-child1 (ths/get-shape file :main-child1)
 
         ;; ==== Action
-        changes1     (cls/generate-relocate (pcb/empty-changes)
-                                            (:objects page)
+        changes1     (cls/generate-relocate (-> (pcb/empty-changes nil)
+                                                (pcb/with-page-id (:id page))
+                                                (pcb/with-objects (:objects page)))
                                             (thi/id :main-root)         ; parent-id
-                                            (:id page)                  ; page-id
                                             2                           ; to-index
                                             #{(:id main-child1)})       ; ids
 

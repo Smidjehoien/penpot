@@ -24,7 +24,6 @@
    [app.main.data.helpers :as dsh]
    [app.main.data.media :as dmm]
    [app.main.data.notifications :as ntf]
-   [app.main.data.workspace.libraries :as dwl]
    [app.main.data.workspace.shapes :as dwsh]
    [app.main.data.workspace.svg-upload :as svg]
    [app.main.repo :as rp]
@@ -235,16 +234,6 @@
             (rx/catch #(handle-media-error % on-error))
             (rx/finalize #(st/emit! (ntf/hide :tag :media-loading))))))))
 
-;; Deprecated in components-v2
-(defn upload-media-asset
-  [params]
-  (let [params (assoc params
-                      :force-media true
-                      :local? false
-                      :on-image #(st/emit! (dwl/add-media %))
-                      :on-svg #(st/emit! (dwl/add-media %)))]
-    (process-media-objects params)))
-
 (defn upload-media-workspace
   [{:keys [position file-id] :as params}]
   (let [params (assoc params
@@ -378,7 +367,7 @@
 
 (defn- add-shapes-and-component
   [it file-data page name [shape children]]
-  (let [[component-shape component-shapes updated-shapes]
+  (let [[component-shape updated-shapes]
         (ctn/convert-shape-in-component shape children (:id file-data))
 
         changes (-> (pcb/empty-changes it)
@@ -389,7 +378,6 @@
                     (pcb/add-component (:id component-shape)
                                        ""
                                        name
-                                       component-shapes
                                        updated-shapes
                                        (:id shape)
                                        (:id page)))]
@@ -476,3 +464,24 @@
            (rx/take 1)
            (rx/map #(svg/add-svg-shapes id % position {:ignore-selection? true
                                                        :change-selection? false}))))))
+(defn create-svg-shape-with-images
+  [file-id id name svg-string position on-success on-error]
+  (ptk/reify ::create-svg-shape-with-images
+    ptk/WatchEvent
+    (watch [_ _ _]
+      (->> (svg->clj [name svg-string])
+           (rx/take 1)
+           (rx/mapcat
+            (fn [svg-data]
+              (->> (svg/upload-images svg-data file-id)
+                   (rx/map #(assoc svg-data :image-data %)))))
+           (rx/map
+            (fn [svg-data]
+              (svg/add-svg-shapes
+               id
+               svg-data
+               position
+               {:ignore-selection? true
+                :change-selection? false})))
+           (rx/tap on-success)
+           (rx/catch on-error)))))

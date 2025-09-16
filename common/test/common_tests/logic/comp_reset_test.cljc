@@ -47,8 +47,7 @@
                                                 file-mdf
                                                 {(:id file-mdf) file-mdf}
                                                 page-mdf
-                                                (:id copy-root)
-                                                true)
+                                                (:id copy-root))
 
         file'     (thf/apply-changes file changes)
 
@@ -99,8 +98,7 @@
                                                 {(:id file-mdf) file-mdf
                                                  (:id library) library}
                                                 page-mdf
-                                                (:id copy-root)
-                                                true)
+                                                (:id copy-root))
 
         file'     (thf/apply-changes file changes)
 
@@ -136,10 +134,10 @@
 
         ;; IMPORTANT: as modifying copies structure is now forbidden, this action
         ;; will not have any effect, and so the parent shape won't also be touched.
-        changes (cls/generate-relocate (pcb/empty-changes)
-                                       (:objects page)
+        changes (cls/generate-relocate (-> (pcb/empty-changes nil)
+                                           (pcb/with-page-id (:id page))
+                                           (pcb/with-objects (:objects page)))
                                        (thi/id :copy-root)      ; parent-id
-                                       (:id page)               ; page-id
                                        0                        ; to-index
                                        #{(thi/id :free-shape)}) ; ids
 
@@ -151,8 +149,7 @@
                                                 file-mdf
                                                 {(:id file-mdf) file-mdf}
                                                 page-mdf
-                                                (:id copy-root)
-                                                true)
+                                                (:id copy-root))
 
         file'   (thf/apply-changes file changes)
 
@@ -198,8 +195,7 @@
                                                 file-mdf
                                                 {(:id file-mdf) file-mdf}
                                                 page-mdf
-                                                (:id copy-root)
-                                                true)
+                                                (:id copy-root))
 
         file'   (thf/apply-changes file changes)
 
@@ -231,10 +227,10 @@
 
         ;; IMPORTANT: as modifying copies structure is now forbidden, this action
         ;; will not have any effect, and so the parent shape won't also be touched.
-        changes (cls/generate-relocate (pcb/empty-changes)
-                                       (:objects page)
+        changes (cls/generate-relocate (-> (pcb/empty-changes nil)
+                                           (pcb/with-page-id (:id page))
+                                           (pcb/with-objects (:objects page)))
                                        (thi/id :copy-root)      ; parent-id
-                                       (:id page)               ; page-id
                                        2                        ; to-index
                                        #{(:id copy-child1)})     ; ids
 
@@ -246,8 +242,7 @@
                                                 file-mdf
                                                 {(:id file-mdf) file-mdf}
                                                 page-mdf
-                                                (:id copy-root)
-                                                true)
+                                                (:id copy-root))
 
         file'   (thf/apply-changes file changes)
 
@@ -291,8 +286,7 @@
                                                 file-mdf
                                                 {(:id file-mdf) file-mdf}
                                                 page-mdf
-                                                (:id copy2-root)
-                                                true)
+                                                (:id copy2-root))
 
         file'     (thf/apply-changes file changes)
 
@@ -338,8 +332,7 @@
                                                 file-mdf
                                                 {(:id file-mdf) file-mdf}
                                                 page-mdf
-                                                (:id copy2-root)
-                                                true)
+                                                (:id copy2-root))
 
         file'     (thf/apply-changes file changes)
 

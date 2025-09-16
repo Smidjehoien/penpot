@@ -373,33 +373,42 @@
   (mf/use-callback
    (mf/deps zoom)
    (fn [event]
-     (let [event  (.getBrowserEvent ^js event)
-           target (dom/get-target event)
-           mod? (kbd/mod? event)
-           picking-color? (= "pixel-overlay" (.-id target))]
+     (let [event      (.getBrowserEvent ^js event)
+
+           target     (dom/get-target event)
+           mod?       (kbd/mod? event)
+           ctrl?      (kbd/ctrl? event)
+
+           picking-color?   (= "pixel-overlay" (.-id target))
+           comments-layer?  (dom/is-child? (dom/get-element "comments") target)
+
+           raw-pt     (dom/get-client-position event)
+           pt         (uwvv/point->viewport raw-pt)
+
+           norm-event ^js (nw/normalize-wheel event)
+
+           delta-y    (.-pixelY norm-event)
+           delta-x    (.-pixelX norm-event)
+           delta-zoom (+ delta-y delta-x)
+
+           scale      (+ 1 (mth/abs (* scale-per-pixel delta-zoom)))
+           scale      (if (pos? delta-zoom) (/ 1 scale) scale)]
 
        (when (or (uwvv/inside-viewport? target) picking-color?)
          (dom/prevent-default event)
          (dom/stop-propagation event)
-         (let [raw-pt (dom/get-client-position event)
-               pt     (uwvv/point->viewport raw-pt)
-               norm-event ^js (nw/normalize-wheel event)
-               ctrl?  (kbd/ctrl? event)
-               delta-y (.-pixelY norm-event)
-               delta-x (.-pixelX norm-event)]
+         (if (or ctrl? mod?)
+           (st/emit! (dw/set-zoom pt scale))
+           (if (and (not (cfg/check-platform? :macos)) (kbd/shift? event))
+             ;; macos sends delta-x automatically, don't need to do it
+             (st/emit! (dw/update-viewport-position {:x #(+ % (/ delta-y zoom))}))
+             (st/emit! (dw/update-viewport-position {:x #(+ % (/ delta-x zoom))
+                                                     :y #(+ % (/ delta-y zoom))})))))
 
-           (if (or ctrl? mod?)
-             (let [delta-zoom (+ delta-y delta-x)
-                   scale (+ 1 (mth/abs (* scale-per-pixel delta-zoom)))
-                   scale (if (pos? delta-zoom) (/ 1 scale) scale)]
-               (st/emit! (dw/set-zoom pt scale)))
-
-             (if (and (not (cfg/check-platform? :macos))
-                      ;; macos sends delta-x automatically, don't need to do it
-                      (kbd/shift? event))
-               (st/emit! (dw/update-viewport-position {:x #(+ % (/ delta-y zoom))}))
-               (st/emit! (dw/update-viewport-position {:x #(+ % (/ delta-x zoom))
-                                                       :y #(+ % (/ delta-y zoom))}))))))))))
+       (when (and comments-layer? (or ctrl? mod?))
+         (dom/prevent-default event)
+         (dom/stop-propagation event)
+         (st/emit! (dw/set-zoom pt scale)))))))
 
 (defn on-drag-enter
   [comp-inst-ref]
@@ -459,10 +468,7 @@
    (fn [event]
      (dom/prevent-default event)
      (let [point (gpt/point (.-clientX event) (.-clientY event))
-           viewport-coord (uwvv/point->viewport point)
-           asset-id     (-> (dnd/get-data event "text/asset-id") uuid/uuid)
-           asset-name   (dnd/get-data event "text/asset-name")
-           asset-type   (dnd/get-data event "text/asset-type")]
+           viewport-coord (uwvv/point->viewport point)]
        (cond
          (dnd/has-type? event "penpot/shape")
          (let [shape   (dnd/get-data event "penpot/shape")
@@ -506,25 +512,6 @@
                         (assoc params :uris uris)
                         (assoc params :blobs (map wapi/data-uri->blob data)))]
            (st/emit! (dwm/upload-media-workspace params)))
-
-         ;; Will trigger when the user drags an SVG asset from the assets panel
-         (and (dnd/has-type? event "text/asset-id") (= asset-type "image/svg+xml"))
-         (let [path (cfg/resolve-file-media {:id asset-id})
-               params {:file-id (:id file)
-                       :position viewport-coord
-                       :uris [path]
-                       :name asset-name
-                       :mtype asset-type}]
-           (st/emit! (dwm/upload-media-workspace params)))
-
-         ;; Will trigger when the user drags an image from the assets SVG
-         (dnd/has-type? event "text/asset-id")
-         (let [params {:file-id (:id file)
-                       :object-id asset-id
-                       :name asset-name}]
-           (st/emit! (dwm/clone-media-object
-                      (with-meta params
-                        {:on-success #(st/emit! (dwm/image-uploaded % viewport-coord))}))))
 
          ;; Will trigger when the user drags a file from their file explorer into the viewport
          ;; Or the user pastes an image

@@ -28,6 +28,7 @@
    [common-tests.logic.multiple-nesting-levels-test]
    [common-tests.logic.swap-and-reset-test]
    [common-tests.logic.swap-as-override-test]
+   [common-tests.logic.token-test]
    [common-tests.pages-helpers-test]
    [common-tests.record-test]
    [common-tests.schema-test]
@@ -35,12 +36,13 @@
    [common-tests.svg-test]
    [common-tests.text-test]
    [common-tests.time-test]
-   [common-tests.types-modifiers-test]
-   [common-tests.types-shape-interactions-test]
+   [common-tests.types.absorb-assets-test]
+   [common-tests.types.components-test]
+   [common-tests.types.modifiers-test]
    [common-tests.types.shape-decode-encode-test]
+   [common-tests.types.shape-interactions-test]
+   [common-tests.types.shape-path-data-test]
    [common-tests.types.tokens-lib-test]
-   [common-tests.types.types-component-test]
-   [common-tests.types.types-libraries-test]
    [common-tests.uuid-test]))
 
 #?(:cljs (enable-console-print!))
@@ -75,6 +77,7 @@
    'common-tests.logic.multiple-nesting-levels-test
    'common-tests.logic.swap-and-reset-test
    'common-tests.logic.swap-as-override-test
+   'common-tests.logic.token-test
    'common-tests.pages-helpers-test
    'common-tests.record-test
    'common-tests.schema-test
@@ -82,10 +85,11 @@
    'common-tests.svg-test
    'common-tests.text-test
    'common-tests.time-test
-   'common-tests.types-modifiers-test
-   'common-tests.types-shape-interactions-test
+   'common-tests.types.modifiers-test
+   'common-tests.types.shape-interactions-test
    'common-tests.types.shape-decode-encode-test
    'common-tests.types.tokens-lib-test
-   'common-tests.types.types-component-test
-   'common-tests.types.types-libraries-test
+   'common-tests.types.components-test
+   'common-tests.types.absorb-assets-test
+   'common-tests.types.shape-path-data-test
    'common-tests.uuid-test))

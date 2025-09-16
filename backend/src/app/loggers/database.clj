@@ -53,13 +53,18 @@
                    (assoc :logger/name logger)
                    (assoc :logger/level level)
                    (dissoc :request/params :value :params :data))]
+
       (merge
        {:context (-> (into (sorted-map) ctx)
                      (pp/pprint-str :length 50))
         :props   (pp/pprint-str props :length 50)
-        :hint    (or (ex-message cause) @message)
+        :hint    (or (when-let [message (ex-message cause)]
+                       (if-let [props-hint (:hint props)]
+                         (str props-hint ": " message)
+                         message))
+                     @message)
         :trace   (or (::trace record)
-                     (ex/format-throwable cause :data? false :explain? false :header? false :summary? false))}
+                     (some-> cause (ex/format-throwable :data? false :explain? false :header? false :summary? false)))}
 
        (when-let [params (or (:request/params context) (:params context))]
          {:params (pp/pprint-str params :length 30 :level 13)})
@@ -74,9 +79,8 @@
          {:explain explain})))))
 
 (defn error-record?
-  [{:keys [::l/level ::l/cause]}]
-  (and (= :error level)
-       (ex/exception? cause)))
+  [{:keys [::l/level]}]
+  (= :error level))
 
 (defn- handle-event
   [{:keys [::db/pool]} {:keys [::l/id] :as record}]

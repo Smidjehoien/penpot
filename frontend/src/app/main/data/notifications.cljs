@@ -19,7 +19,7 @@
 
 (def ^:private schema:notification
   [:map {:title "Notification"}
-   [:level [::sm/one-of #{:success :error :info :warning}]]
+   [:level {:optional true} [::sm/one-of #{:success :error :info :warning}]]
    [:status {:optional true}
     [::sm/one-of #{:visible :hide}]]
    [:position {:optional true}
@@ -32,6 +32,14 @@
     [:or :string :keyword]]
    [:timeout {:optional true}
     [:maybe :int]]
+   [:accept {:optional true}
+    [:map
+     [:label :string]
+     [:callback ::sm/fn]]]
+   [:cancel {:optional true}
+    [:map
+     [:label :string]
+     [:callback ::sm/fn]]]
    [:actions {:optional true}
     [:vector
      [:map
@@ -43,15 +51,12 @@
       [:label :string]
       [:callback ::sm/fn]]]]])
 
-(def ^:private valid-notification?
-  (sm/validator schema:notification))
+(def ^:private check-notification
+  (sm/check-fn schema:notification))
 
 (defn show
   [data]
-
-  (dm/assert!
-   "expected valid notification map"
-   (valid-notification? data))
+  (assert (check-notification data) "expected valid notification map")
 
   (ptk/reify ::show
     ptk/UpdateEvent
@@ -60,12 +65,16 @@
         (assoc state :notification notification)))
 
     ptk/WatchEvent
-    (watch [_ _ stream]
+    (watch [_ state stream]
       (rx/merge
-       (let [stopper (rx/filter (ptk/type? ::hide) stream)]
+       (let [stopper  (rx/filter (ptk/type? ::hide) stream)
+             route-id (dm/get-in state [:route :data :name])]
+
          (->> stream
               (rx/filter (ptk/type? :app.main.router/navigate))
-              (rx/map (fn [_] (hide)))
+              (rx/map deref)
+              (rx/filter #(not= route-id (:id %)))
+              (rx/map hide)
               (rx/take-until stopper)))
        (when (:timeout data)
          (let [stopper (rx/filter (ptk/type? ::show) stream)]
@@ -120,13 +129,11 @@
           :timeout timeout})))
 
 (defn dialog
-  [& {:keys [content controls actions position tag level links]
-      :or {controls :none position :floating level :info}}]
+  [& {:keys [content accept cancel tag links]}]
   (show (d/without-nils
          {:content content
-          :level level
+          :type :inline
+          :accept accept
+          :cancel cancel
           :links links
-          :position position
-          :controls controls
-          :actions actions
           :tag tag})))

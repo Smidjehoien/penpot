@@ -20,7 +20,7 @@
    [beicon.v2.core :as rx]
    [potok.v2.core :as ptk]))
 
-(defn- impl-update-zoom
+(defn impl-update-zoom
   [{:keys [vbox] :as local} center zoom]
   (let [new-zoom (if (fn? zoom) (zoom (:zoom local)) zoom)
         old-zoom (:zoom local)
@@ -90,7 +90,7 @@
           state
           (update state :workspace-local
                   (fn [{:keys [vport] :as local}]
-                    (let [srect (gal/adjust-to-viewport vport srect {:padding 40})
+                    (let [srect (gal/adjust-to-viewport vport srect {:padding 160})
                           zoom  (/ (:width vport) (:width srect))]
                       (-> local
                           (assoc :zoom zoom)

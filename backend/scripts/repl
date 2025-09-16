@@ -30,7 +30,9 @@ export PENPOT_FLAGS="\
        enable-access-tokens \
        enable-tiered-file-data-storage \
        enable-file-validation \
-       enable-file-schema-validation";
+       enable-file-schema-validation \
+       enable-subscriptons \
+       enable-subscriptons-old";
 
 # Default deletion delay for devenv
 export PENPOT_DELETION_DELAY="24h"
@@ -70,20 +72,20 @@ export PENPOT_OBJECTS_STORAGE_S3_ENDPOINT=http://minio:9000
 export PENPOT_OBJECTS_STORAGE_S3_BUCKET=penpot
 export PENPOT_OBJECTS_STORAGE_FS_DIRECTORY="assets"
 
-export OPTIONS="
-       -A:jmx-remote -A:dev \
-       -J-Djava.util.logging.manager=org.apache.logging.log4j.jul.LogManager \
-       -J-Djdk.attach.allowAttachSelf \
-       -J-Dpolyglot.engine.WarnInterpreterOnly=false \
-       -J-Dlog4j2.configurationFile=log4j2-devenv-repl.xml \
-       -J-XX:+EnableDynamicAgentLoading \
-       -J-XX:-OmitStackTraceInFastThrow \
-       -J-XX:+UnlockDiagnosticVMOptions \
-       -J-XX:+DebugNonSafepoints \
-       -J-Djdk.tracePinnedThreads=full"
+export JAVA_OPTS="\
+       -Djava.util.logging.manager=org.apache.logging.log4j.jul.LogManager \
+       -Djdk.attach.allowAttachSelf \
+       -Dlog4j2.configurationFile=log4j2-devenv-repl.xml \
+       -Djdk.tracePinnedThreads=full \
+       -XX:+EnableDynamicAgentLoading \
+       -XX:-OmitStackTraceInFastThrow                    \
+       -XX:+UnlockDiagnosticVMOptions \
+       -XX:+DebugNonSafepoints \
+       --sun-misc-unsafe-memory-access=allow \
+       --enable-preview \
+       --enable-native-access=ALL-UNNAMED";
 
-# Enable preview
-export OPTIONS="$OPTIONS -J--enable-preview"
+export OPTIONS="-A:jmx-remote -A:dev"
 
 # Setup HEAP
 # export OPTIONS="$OPTIONS -J-Xms50m -J-Xmx1024m"
